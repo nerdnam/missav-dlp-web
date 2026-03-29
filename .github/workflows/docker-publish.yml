@@ -1,37 +1,35 @@
 name: Docker Build and Publish
 
-# main 브랜치에 코드가 push 될 때마다 이 작업이 자동으로 실행됩니다.
 on:
   push:
     branches: [ "main" ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. GitHub 저장소의 내 코드를 복사해 옵니다.
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 도커 빌드를 위한 도구를 세팅합니다.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. 아까 등록한 금고(Secrets)에서 정보를 꺼내 Docker Hub에 로그인합니다.
+      # 🎯 시크릿 대신 아이디(nerdnam)를 직접 입력했습니다!
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: nerdnam
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. Dockerfile을 읽어서 이미지를 빌드하고 Docker Hub로 쏘아 올립니다!
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 최신 버전(latest)과 0.0.1 버전 두 개의 태그를 동시에 달아줍니다.
           tags: |
             nerdnam/missav-dlp-web:latest
             nerdnam/missav-dlp-web:0.0.1
