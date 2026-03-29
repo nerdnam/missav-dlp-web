@@ -1,4 +1,4 @@
-name: Docker Build and Publish
+name: Docker Build and Publish to GHCR
 
 on:
   push:
@@ -6,10 +6,17 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }} # 자동으로 nerdnam/missav-dlp-web 이 들어갑니다.
 
 jobs:
-  build:
+  build-and-push-image:
     runs-on: ubuntu-latest
+    
+    # 🎯 핵심: GitHub가 알아서 패키지 업로드 권한(열쇠)을 부여하도록 설정합니다. (시크릿 필요 없음!)
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -18,18 +25,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 🎯 시크릿 대신 아이디(nerdnam)를 직접 입력했습니다!
-      - name: Log in to Docker Hub
+      # 🎯 시크릿 대신 GitHub 자체 마스터키(GITHUB_TOKEN)를 사용해 GHCR에 자동 로그인합니다.
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
-          username: nerdnam
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          # 저장소 위치가 docker.io(도커허브)에서 ghcr.io(깃허브)로 변경됩니다.
           tags: |
-            nerdnam/missav-dlp-web:latest
-            nerdnam/missav-dlp-web:0.0.1
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:0.0.1
