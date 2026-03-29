@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MissAV Downloader</title>
+    <style>
+        body { font-family: sans-serif; padding: 50px; background-color: #f4f4f9; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        input[type="text"] { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; margin-bottom: 20px; }
+        button:hover { background-color: #0056b3; }
+        #message { text-align: center; font-weight: bold; margin-bottom: 20px; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid #ddd; text-align: left; }
+        th { background-color: #f8f9fa; }
+        
+        .status-대기 { color: gray; }
+        .status-다운로드 { color: #007bff; font-weight: bold; }
+        .status-완료 { color: green; font-weight: bold; }
+        .status-에러 { color: red; font-weight: bold; }
+
+        /* 진행률 바 스타일 */
+        .progress-bg { background-color: #e9ecef; border-radius: 4px; height: 12px; width: 100%; margin-top: 8px; overflow: hidden; }
+        .progress-bar { background-color: #28a745; height: 100%; transition: width 0.3s ease; }
+        
+        /* 삭제 버튼 스타일 */
+        .delete-btn { background-color: #dc3545; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; width: auto; margin: 0; }
+        .delete-btn:hover { background-color: #c82333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🎥 MissAV Downloader Web UI</h2>
+        <form id="downloadForm">
+            <input type="text" id="url" name="url" placeholder="동영상 URL을 입력하세요" required>
+            <button type="submit">다운로드 추가</button>
+        </form>
+        <div id="message"></div>
+
+        <h3>📋 다운로드 목록</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 60%;">URL / 진행상황</th>
+                    <th style="width: 20%;">상태</th>
+                    <th style="width: 20%; text-align: center;">관리</th>
+                </tr>
+            </thead>
+            <tbody id="taskList">
+                </tbody>
+        </table>
+    </div>
+
+    <script>
+        document.getElementById('downloadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const url = document.getElementById('url').value;
+            const messageDiv = document.getElementById('message');
+            
+            fetch('/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ 'url': url })
+            })
+            .then(response => response.json())
+            .then(data => {
+                messageDiv.style.color = data.status === 'success' ? 'green' : 'red';
+                messageDiv.innerText = data.message;
+                document.getElementById('url').value = '';
+                fetchTasks(); 
+            });
+        });
+
+        function fetchTasks() {
+            fetch('/api/tasks')
+            .then(response => response.json())
+            .then(tasks => {
+                const tbody = document.getElementById('taskList');
+                tbody.innerHTML = '';
+                
+                // Object.entries를 사용하여 key(taskId)와 value(task)를 함께 가져옵니다.
+                const taskArray = Object.entries(tasks);
+                
+                if (taskArray.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding: 20px;">목록이 비어있습니다.</td></tr>';
+                    return;
+                }
+
+                taskArray.reverse().forEach(([taskId, task]) => {
+                    const tr = document.createElement('tr');
+                    
+                    let statusClass = '';
+                    if (task.status.includes('대기')) statusClass = 'status-대기';
+                    else if (task.status.includes('다운로드')) statusClass = 'status-다운로드';
+                    else if (task.status.includes('완료')) statusClass = 'status-완료';
+                    else if (task.status.includes('에러')) statusClass = 'status-에러';
+
+                    // 다운로드 중일 때만 진행률 바 표시
+                    let progressHtml = '';
+                    if (task.status === '다운로드 중') {
+                        let percent = task.progress || '0%';
+                        progressHtml = `
+                            <div class="progress-bg">
+                                <div class="progress-bar" style="width: ${percent};"></div>
+                            </div>
+                            <div style="font-size: 12px; margin-top: 4px; color: #555;">진행률: ${percent}</div>
+                        `;
+                    }
+
+                    tr.innerHTML = `
+                        <td>
+                            <div style="word-break: break-all; font-size: 14px;">${task.url}</div>
+                            ${progressHtml}
+                        </td>
+                        <td class="${statusClass}">${task.status}</td>
+                        <td style="text-align: center;">
+                            <button class="delete-btn" onclick="deleteTask('${taskId}')">삭제</button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            });
+        }
+
+        // 삭제 버튼 기능
+        function deleteTask(taskId) {
+            if (!confirm('목록에서 삭제하시겠습니까?\n(다운로드 중인 항목은 즉시 취소됩니다)')) return;
+            
+            fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            .then(response => response.json())
+            .then(data => {
+                fetchTasks(); // 즉시 목록 새로고침
+            });
+        }
+
+        setInterval(fetchTasks, 1500); // UI 갱신 속도를 조금 더 빠르게(1.5초)
+        fetchTasks();
+    </script>
+</body>
+</html>

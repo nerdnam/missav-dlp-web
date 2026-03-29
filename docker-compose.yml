@@ -1,0 +1,9 @@
+services:
+  missav-dlp-web:
+    image: nerdnam/missav-dlp-web:0.0.1
+    ports:
+      - '55000:5000'
+    pull_policy: never
+    restart: unless-stopped
+    volumes:
+      - /mnt/Data3/download:/downloads
