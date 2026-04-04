@@ -28,3 +28,9 @@ services:
     volumes:
       - /실제/다운로드/경로:/downloads
     restart: unless-stopped
+
+
+### 2. gluetun docker-compose.yaml에 포트를 추가해주세요
+```yaml
+ports:
+     - 58000:5000/tcp  # 사용할 포트 58000, missav-dlp-web docker 내부 포트 5000
