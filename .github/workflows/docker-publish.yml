@@ -7,13 +7,12 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # 자동으로 nerdnam/missav-dlp-web 이 들어갑니다.
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
     
-    # 🎯 핵심: GitHub가 알아서 패키지 업로드 권한(열쇠)을 부여하도록 설정합니다. (시크릿 필요 없음!)
     permissions:
       contents: read
       packages: write
@@ -22,10 +21,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 1. 버전 번호 자동 계산 (0.0.1, 0.0.2...)
+      - name: Get next version
+        id: versioning
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          major_pattern: "(MAJOR)"
+          minor_pattern: "(MINOR)"
+          version_format: "${major}.${minor}.${patch}"
+          major_value: 0
+          minor_value: 0
+          patch_value: 1
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 🎯 시크릿 대신 GitHub 자체 마스터키(GITHUB_TOKEN)를 사용해 GHCR에 자동 로그인합니다.
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
@@ -33,12 +44,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 2. 빌드 및 푸시 (자동 계산된 버전 번호 적용)
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 저장소 위치가 docker.io(도커허브)에서 ghcr.io(깃허브)로 변경됩니다.
+          # ${{ steps.versioning.outputs.version }} 가 0.0.x 숫자를 자동으로 넣어줍니다.
           tags: |
-            ghcr.io/${{ env.IMAGE_NAME }}:latest
-            ghcr.io/${{ env.IMAGE_NAME }}:0.0.1
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.versioning.outputs.version }}
