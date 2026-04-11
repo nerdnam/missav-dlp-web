@@ -1,6 +1,5 @@
 name: Docker Build and Publish
 
-# main 브랜치에 코드가 push 될 때마다 이 작업이 자동으로 실행됩니다.
 on:
   push:
     branches: [ "main" ]
@@ -10,28 +9,43 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. GitHub 저장소의 내 코드를 복사해 옵니다.
+      # 1. GitHub 저장소 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 도커 빌드를 위한 도구를 세팅합니다.
+      # 2. 버전 번호 자동 계산 (0.0.x 방식)
+      - name: Get next version
+        id: versioning
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          # 시작 버전 설정
+          tag_prefix: "v"
+          major_pattern: "(MAJOR)"
+          minor_pattern: "(MINOR)"
+          version_format: "${major}.${minor}.${patch}"
+          # 기본 시작 버전을 지정 (기존 0.0.1을 유지하고 싶다면)
+          major_value: 0
+          minor_value: 0
+          patch_value: 1
+
+      # 3. 도커 빌드 도구 세팅
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. 아까 등록한 금고(Secrets)에서 정보를 꺼내 Docker Hub에 로그인합니다.
+      # 4. Docker Hub 로그인
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. Dockerfile을 읽어서 이미지를 빌드하고 Docker Hub로 쏘아 올립니다!
+      # 5. 이미지를 빌드하고 자동으로 계산된 버전으로 푸시
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 최신 버전(latest)과 0.0.1 버전 두 개의 태그를 동시에 달아줍니다.
+          # ${{ steps.versioning.outputs.version }} 가 위에서 계산된 번호를 넣어줍니다.
           tags: |
             nerdnam/missav-dlp-web:latest
-            nerdnam/missav-dlp-web:0.0.1
+            nerdnam/missav-dlp-web:${{ steps.versioning.outputs.version }}
