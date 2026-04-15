@@ -24,7 +24,7 @@ VPN(예: Gluetun)을 적용하여 안전하게 구동하는 것을 강력히 권
 version: '3'
 services:
   missav-dlp-web:
-    image: ghcr.io/nerdnam/missav-dlp-web:0.0.1
+    image: ghcr.io/nerdnam/missav-dlp-web:latest
     network_mode: "container:gluetun-vpn" # (선택) VPN 컨테이너 네트워크 사용 시
     # ports:
     #   - "5000:5000" # VPN을 사용하지 않을 때만 활성화하세요.
