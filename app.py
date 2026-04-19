@@ -6,78 +6,237 @@ import threading
 import queue
 import uuid
 import re
+import logging
+from datetime import datetime
 from urllib.parse import urlparse
 from flask import Flask, request, render_template, jsonify, send_file, Response
 import yt_dlp
 from yt_dlp.extractor.common import InfoExtractor
 from curl_cffi import requests as cffi_requests
 
-# --- 설정 관리 ---
-DOWNLOAD_DIR = '/downloads'
-SETTINGS_FILE = os.path.join(DOWNLOAD_DIR, '.settings.json')
+# ============================================================
+# CONFIGURATION MANAGEMENT (No hardcoded paths)
+# ============================================================
 
+# Get the directory where app.py is located
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Settings file is now in the SAME folder as app.py (not inside downloads)
+SETTINGS_FILE = os.path.join(BASE_DIR, '.settings.json')
+
+# Default settings (download_dir can be changed by user)
 DEFAULT_SETTINGS = {
-    'max_concurrent': 4,
+    'max_concurrent': 1,  # Changed to 1 for sequential by default
     'filename_template': '[%(id)s] %(title).60s.%(ext)s',
     'spoofdpi_enabled': True,
     'video_quality': 'best',
     'mirrors': ['missav.ai', 'missav.net', 'missav123.com', 'missav.com', 'missav.ws'],
+    'download_dir': os.path.join(BASE_DIR, 'downloads'),  # Configurable!
+    'delay_between_downloads': 3,
+    'max_retries': 3,
+    'sequential_mode': True
 }
 
 def load_settings():
+    """Load settings from .settings.json in project root"""
+    global DOWNLOAD_DIR
     try:
-        if not os.path.exists(DOWNLOAD_DIR):
-            os.makedirs(DOWNLOAD_DIR)
-        with open(SETTINGS_FILE, 'r') as f:
-            saved = json.load(f)
-            merged = {**DEFAULT_SETTINGS, **saved}
-            return merged
-    except (FileNotFoundError, json.JSONDecodeError):
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                saved = json.load(f)
+                merged = {**DEFAULT_SETTINGS, **saved}
+        else:
+            merged = DEFAULT_SETTINGS.copy()
+        
+        # Set DOWNLOAD_DIR from settings
+        DOWNLOAD_DIR = merged.get('download_dir', DEFAULT_SETTINGS['download_dir'])
+        
+        # Create download directory if it doesn't exist
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        
+        return merged
+    except Exception as e:
+        print(f"Error loading settings: {e}")
+        DOWNLOAD_DIR = DEFAULT_SETTINGS['download_dir']
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
         return DEFAULT_SETTINGS.copy()
 
 def save_settings(settings):
+    """Save settings to .settings.json in project root"""
+    global DOWNLOAD_DIR
     with open(SETTINGS_FILE, 'w') as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
+    # Update DOWNLOAD_DIR after saving
+    DOWNLOAD_DIR = settings.get('download_dir', DEFAULT_SETTINGS['download_dir'])
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Load settings at startup
 settings = load_settings()
 
-# --- SpoofDPI 프록시 자동 기동 (기본 포트 8080) ---
+# ============================================================
+# FFMPEG SETUP (for local ffmpeg/bin folder)
+# ============================================================
+
+def get_ffmpeg_path():
+    """Find ffmpeg in local ffmpeg/bin folder or system PATH"""
+    local_ffmpeg = os.path.join(BASE_DIR, 'ffmpeg', 'bin', 'ffmpeg.exe')
+    if os.path.exists(local_ffmpeg):
+        return local_ffmpeg
+    return 'ffmpeg'
+
+FFMPEG_PATH = get_ffmpeg_path()
+print(f"[FFmpeg] Using: {FFMPEG_PATH}")
+
+# ============================================================
+# SPOOFDPI SETUP
+# ============================================================
+
 SPOOFDPI_PORT = 8080
 SPOOFDPI_PROXY = f"http://127.0.0.1:{SPOOFDPI_PORT}"
 
 def start_spoofdpi():
+    base_dir = BASE_DIR
+    if os.path.exists(os.path.join(base_dir, 'spoofdpi.exe')):
+        default_bin = os.path.join(base_dir, 'spoofdpi.exe')
+    elif os.path.exists(os.path.join(base_dir, 'spoofdpi')):
+        default_bin = os.path.join(base_dir, 'spoofdpi')
+    else:
+        default_bin = 'spoofdpi'
+    
+    spoofdpi_bin = os.environ.get('SPOOFDPI_PATH', default_bin)
     try:
         proc = subprocess.Popen(
-            ["spoofdpi"],
+            [spoofdpi_bin],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
         time.sleep(2)
         if proc.poll() is None:
-            print(f"[System] SpoofDPI 엔진 가동 성공 (Port: {SPOOFDPI_PORT})", flush=True)
+            print(f"[System] SpoofDPI started (Port: {SPOOFDPI_PORT})", flush=True)
         else:
-            print(f"[System] SpoofDPI 가동 실패", flush=True)
+            print(f"[System] SpoofDPI failed to start", flush=True)
     except FileNotFoundError:
-        print("[System] SpoofDPI 바이너리를 찾을 수 없습니다.", flush=True)
+        print(f"[System] SpoofDPI not found at '{spoofdpi_bin}'", flush=True)
 
 start_spoofdpi()
 
-app = Flask(__name__)
+# ============================================================
+# FLASK APP SETUP
+# ============================================================
+
 app = Flask(__name__, static_folder='templates', static_url_path='/static')
+
+# Queue and task management
 download_queue = queue.Queue()
 tasks = {}
+active_downloads = 0
+queue_lock = threading.Lock()
+
+# Create logs directory
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 class DownloadCancelled(Exception):
     pass
 
-# --- 수정된 커스텀 추출기 ---
+# ============================================================
+# JAV CODE HELPERS
+# ============================================================
+
+def jav_code_to_url(code):
+    """Convert JAV code to full URL"""
+    code = code.strip().upper()
+    jav_pattern = re.compile(r'^([A-Z]{2,5})-(\d{3,5})$')
+    if jav_pattern.match(code):
+        mirror = settings.get('mirrors', ['missav.ws'])[0]
+        return f"https://{mirror}/ko/{code}"
+    return None
+
+def is_jav_code(text):
+    """Check if text looks like a JAV code"""
+    return bool(re.match(r'^([A-Z]{2,5})-(\d{3,5})$', text.strip().upper()))
+
+# ============================================================
+# VIDEO INFO (Get resolution + duration without downloading)
+# ============================================================
+
+def get_video_info(url):
+    """Fetch video information (resolutions, duration) without downloading"""
+    try:
+        # Convert JAV code to URL if needed
+        if is_jav_code(url):
+            url = jav_code_to_url(url)
+        
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.add_info_extractor(MyCustomMissAV())
+            ydl.add_default_info_extractors()
+            info = ydl.extract_info(url, download=False)
+            
+            formats = []
+            for f in info.get('formats', []):
+                height = f.get('height')
+                if height:
+                    formats.append({
+                        'format_id': f.get('format_id'),
+                        'resolution': f"{height}p",
+                        'height': height,
+                        'ext': f.get('ext'),
+                        'filesize': f.get('filesize'),
+                        'vcodec': f.get('vcodec'),
+                        'acodec': f.get('acodec')
+                    })
+            
+            # Remove duplicates, keep highest quality per resolution
+            unique_formats = {}
+            for f in formats:
+                height = f['height']
+                if height not in unique_formats:
+                    unique_formats[height] = f
+            
+            duration = info.get('duration')
+            is_preview = duration and duration < 600  # Less than 10 minutes = preview
+            
+            return {
+                'id': info.get('id'),
+                'title': info.get('title'),
+                'duration': duration,
+                'duration_string': format_duration(duration),
+                'thumbnail': info.get('thumbnail'),
+                'formats': sorted(unique_formats.values(), key=lambda x: x['height'], reverse=True),
+                'is_preview': is_preview,
+                'url': url
+            }
+    except Exception as e:
+        print(f"Error getting video info: {e}")
+        return None
+
+def format_duration(seconds):
+    if not seconds:
+        return "Unknown"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+# ============================================================
+# CUSTOM MISS AV EXTRACTOR (Your existing code)
+# ============================================================
+
 class MyCustomMissAV(InfoExtractor):
     IE_NAME = 'custom_missav'
     _VALID_URL = r'https?://(?:[^/]+\.)?missav\.[^/]+/(?:[^/]+/)?(?P<id>[^/?#]+)'
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
-        print(f'🔥 [로직 시작] 파싱 대상: {url}', flush=True)
+        print(f'🔥 [Logic Start] Target: {url}', flush=True)
 
         parsed_url = urlparse(url)
         path = parsed_url.path
@@ -87,7 +246,6 @@ class MyCustomMissAV(InfoExtractor):
         webpage = None
         used_url = url
 
-        # 1. 페이지 HTML 소스 가져오기
         for mirror in mirrors:
             test_url = f"https://{mirror}{path}"
             proxy_list = [SPOOFDPI_PROXY, None] if settings.get('spoofdpi_enabled', True) else [None]
@@ -103,73 +261,53 @@ class MyCustomMissAV(InfoExtractor):
                     if res.status_code == 200 and ('seek' in res.text or 'm3u8' in res.text):
                         webpage = res.text
                         used_url = test_url
-                        print(f'✅ 페이지 접속 성공: {mirror} (proxy={proxy})', flush=True)
+                        print(f'✅ Page connected: {mirror} (proxy={proxy})', flush=True)
                         break
                 except Exception as e:
-                    print(f'⚠️ {mirror} 접속 실패 (proxy={proxy}): {e}', flush=True)
+                    print(f'⚠️ Failed: {mirror} (proxy={proxy}): {e}', flush=True)
                     continue
             if webpage:
                 break
 
         if not webpage:
-            raise ValueError("페이지 소스를 불러오는 데 실패했습니다. (Cloudflare 차단 의심)")
+            raise ValueError("Failed to load page source (Cloudflare block suspected)")
 
-        # 2. [핵심 수정] 유저스크립트와 동일한 로직으로 UUID 추출
-        # 유저스크립트: document.evaluate('/html/body/script[5]/text()', ...)
-        # -> 5번째 script 태그 내용에서 seek 위치 기준으로 추출
         video_uuid = None
-
-        # script 태그 내용들을 순서대로 추출
         script_contents = re.findall(r'<script[^>]*>(.*?)</script>', webpage, re.DOTALL)
-        print(f'[UUID] 총 script 태그 수: {len(script_contents)}', flush=True)
+        print(f'[UUID] Script tags: {len(script_contents)}', flush=True)
 
-        # 5번째 script(index=4)부터 시작해서 seek가 있는 script를 찾음
         for idx, script_content in enumerate(script_contents):
             seek_index = script_content.find('seek')
             if seek_index != -1 and seek_index >= 38:
                 candidate = script_content[seek_index - 38: seek_index - 2]
-                # UUID 형식 검증 (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
                 if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', candidate):
                     video_uuid = candidate
-                    print(f'✅ UUID 발견 (script #{idx+1}): {video_uuid}', flush=True)
+                    print(f'✅ UUID found (script #{idx+1}): {video_uuid}', flush=True)
                     break
-                else:
-                    print(f'⚠️ script #{idx+1} seek 발견했지만 UUID 형식 불일치: "{candidate}"', flush=True)
 
-        # fallback: 전체 HTML에서 UUID 패턴 검색
         if not video_uuid:
-            print('[UUID] fallback: 전체 HTML에서 UUID 검색 시도', flush=True)
-            # seek 주변에서 UUID를 찾음
             seek_idx = webpage.find('seek')
             while seek_idx != -1:
                 if seek_idx >= 38:
                     candidate = webpage[seek_idx - 38: seek_idx - 2]
                     if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', candidate):
                         video_uuid = candidate
-                        print(f'✅ UUID fallback 발견: {video_uuid}', flush=True)
+                        print(f'✅ UUID fallback: {video_uuid}', flush=True)
                         break
                 seek_idx = webpage.find('seek', seek_idx + 1)
 
-        # 최후 fallback: 정규식으로 UUID 패턴 추출
         if not video_uuid:
-            print('[UUID] 최후 fallback: 정규식 UUID 검색', flush=True)
-            uuid_match = re.search(
-                r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',
-                webpage
-            )
+            uuid_match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', webpage)
             if uuid_match:
                 video_uuid = uuid_match.group(1)
-                print(f'✅ UUID 정규식 발견: {video_uuid}', flush=True)
+                print(f'✅ UUID regex: {video_uuid}', flush=True)
 
         if not video_uuid:
-            raise ValueError("영상 고유 ID(UUID)를 찾을 수 없습니다.")
+            raise ValueError("Video UUID not found")
 
-        # 3. 마스터 m3u8 주소 구성
         master_url = f"https://surrit.com/{video_uuid}/playlist.m3u8"
-        print(f'🔗 마스터 m3u8: {master_url}', flush=True)
+        print(f'🔗 Master m3u8: {master_url}', flush=True)
 
-        # 4. 마스터 m3u8 파싱하여 화질별 URL 생성
-        # surrit.com은 프록시 없이 직접 접근
         final_formats = []
         try:
             m_res = cffi_requests.get(
@@ -181,23 +319,18 @@ class MyCustomMissAV(InfoExtractor):
                     'Origin': f"https://{urlparse(used_url).netloc}",
                 }
             )
-            print(f'[m3u8] 응답 코드: {m_res.status_code}', flush=True)
-            print(f'[m3u8] 내용 미리보기:\n{m_res.text[:500]}', flush=True)
-
             lines = m_res.text.split('\n')
             for line in lines:
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
-                # line 예: "1080p/video.m3u8" 또는 "1080p/playlist.m3u8"
-                quality_label = line.split('/')[0]  # "1080p"
+                quality_label = line.split('/')[0]
                 quality_url = f"https://surrit.com/{video_uuid}/{line}"
                 height = None
                 try:
                     height = int(re.search(r'(\d+)', quality_label).group(1))
                 except:
                     pass
-
                 final_formats.append({
                     'url': quality_url,
                     'ext': 'mp4',
@@ -210,14 +343,10 @@ class MyCustomMissAV(InfoExtractor):
                         'Origin': f"https://{urlparse(used_url).netloc}",
                     }
                 })
-                print(f'[포맷] 추가: {quality_label} -> {quality_url}', flush=True)
-
         except Exception as e:
-            print(f"⚠️ 화질별 목록 추출 실패: {e}", flush=True)
+            print(f"⚠️ Failed to extract quality list: {e}", flush=True)
 
-        # 화질 목록이 비었으면 yt-dlp 기본 m3u8 분석기 사용
         if not final_formats:
-            print('[포맷] yt-dlp 기본 m3u8 분석기 사용', flush=True)
             final_formats = self._extract_m3u8_formats(
                 master_url, video_id, 'mp4', m3u8_id='hls',
                 headers={
@@ -226,11 +355,8 @@ class MyCustomMissAV(InfoExtractor):
                 }
             )
 
-        # 화질 정렬 (높은 화질 우선)
         final_formats.sort(key=lambda x: x.get('quality', 0) or x.get('height', 0) or 0, reverse=True)
-
         title = self._og_search_title(webpage, default=video_id)
-        print(f'[완료] 제목: {title}, 포맷 수: {len(final_formats)}', flush=True)
 
         return {
             'id': video_id,
@@ -239,98 +365,243 @@ class MyCustomMissAV(InfoExtractor):
             'age_limit': 18,
         }
 
+# ============================================================
+# DOWNLOAD FUNCTION (with per-task logging)
+# ============================================================
 
-# --- 실제 다운로드 수행 함수 ---
-def download_video(task_id, url):
+def setup_task_logger(task_id):
+    """Create a logger for a specific download task"""
+    log_file = os.path.join(LOGS_DIR, f'task_{task_id}.log')
+    logger = logging.getLogger(f'task_{task_id}')
+    logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # File handler
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    fh.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    
+    return logger, log_file
+
+def download_video(task_id, url, selected_format=None):
+    """Download video with progress tracking and per-task logging"""
+    task_logger, log_file = setup_task_logger(task_id)
+    task_logger.info(f"Starting download for: {url}")
+    
+    # Update task with log file path
+    if task_id in tasks:
+        tasks[task_id]['log_file'] = log_file
+        tasks[task_id]['stage'] = 'Starting'
+    
     def progress_hook(d):
         if task_id not in tasks:
-            raise DownloadCancelled("취소됨")
+            raise DownloadCancelled("Cancelled")
         if d['status'] == 'downloading':
             p = d.get('_percent_str', '0%')
-            tasks[task_id]['progress'] = re.sub(r'\x1b[^m]*m', '', p).strip()
+            p_clean = re.sub(r'\x1b[^m]*m', '', p).strip()
+            tasks[task_id]['progress'] = p_clean
+            tasks[task_id]['stage'] = 'Downloading'
+            task_logger.info(f"Progress: {p_clean}")
         elif d['status'] == 'finished':
             tasks[task_id]['progress'] = '100%'
+            tasks[task_id]['stage'] = 'Merging'
+            task_logger.info("Download finished, merging...")
 
     tmpl = settings.get('filename_template', DEFAULT_SETTINGS['filename_template'])
-
-    # 화질 선택 로직
-    quality = settings.get('video_quality', 'best')
-    if quality == 'best':
-        format_selector = 'bestvideo+bestaudio/best'
-    elif quality == '1080p':
-        format_selector = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-    elif quality == '720p':
-        format_selector = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+    
+    # Use selected format or default quality
+    if selected_format:
+        format_selector = selected_format
     else:
-        format_selector = 'bestvideo+bestaudio/best'
-
+        quality = settings.get('video_quality', 'best')
+        if quality == 'best':
+            format_selector = 'bestvideo+bestaudio/best'
+        elif quality == '1080p':
+            format_selector = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+        elif quality == '720p':
+            format_selector = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+        else:
+            format_selector = 'bestvideo+bestaudio/best'
+    
+    task_logger.info(f"Format selector: {format_selector}")
+    
     ydl_opts = {
-        'outtmpl': f'{DOWNLOAD_DIR}/{tmpl}',
+        'outtmpl': os.path.join(DOWNLOAD_DIR, tmpl),
         'format': format_selector,
         'merge_output_format': 'mp4',
-        # surrit.com CDN은 프록시 없이 직접 접근 (프록시가 오히려 방해)
         'proxy': None,
         'quiet': False,
         'noprogress': True,
         'progress_hooks': [progress_hook],
+        'ffmpeg_location': FFMPEG_PATH,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://missav.ws/',
             'Origin': 'https://missav.ws',
         },
-        'extractor_args': {
-            'generic': ['impersonate']
-        },
-        # HLS 다운로드 관련 옵션
+        'extractor_args': {'generic': ['impersonate']},
         'hls_prefer_native': True,
         'concurrent_fragment_downloads': 5,
     }
-
-    with yt_dlp.YoutubeDL(ydl_opts, auto_init=False) as ydl:
-        ydl.add_info_extractor(MyCustomMissAV())
-        ydl.add_default_info_extractors()
-        try:
-            print(f"[Download] 시작: {url}", flush=True)
+    
+    try:
+        task_logger.info(f"Starting yt-dlp download")
+        with yt_dlp.YoutubeDL(ydl_opts, auto_init=False) as ydl:
+            ydl.add_info_extractor(MyCustomMissAV())
+            ydl.add_default_info_extractors()
             ydl.download([url])
-            if task_id in tasks:
-                tasks[task_id]['status'] = '완료'
-        except DownloadCancelled:
-            if task_id in tasks:
-                tasks[task_id]['status'] = '취소됨'
-        except Exception as e:
-            print(f"[Error] {url}: {e}", flush=True)
-            if task_id in tasks:
-                tasks[task_id]['status'] = f'에러: {str(e)[:100]}'
+        
+        if task_id in tasks:
+            tasks[task_id]['status'] = 'Completed'
+            tasks[task_id]['stage'] = 'Complete'
+            task_logger.info("Download completed successfully")
+            
+            # Find the downloaded file to get size
+            for f in os.listdir(DOWNLOAD_DIR):
+                if task_id in f or (tasks[task_id].get('url') and tasks[task_id]['url'].split('/')[-1] in f):
+                    fp = os.path.join(DOWNLOAD_DIR, f)
+                    tasks[task_id]['filename'] = f
+                    tasks[task_id]['filesize'] = os.path.getsize(fp)
+                    break
+                    
+    except DownloadCancelled:
+        if task_id in tasks:
+            tasks[task_id]['status'] = 'Cancelled'
+            tasks[task_id]['stage'] = 'Cancelled'
+        task_logger.warning("Download cancelled by user")
+    except Exception as e:
+        error_msg = str(e)[:200]
+        task_logger.error(f"Download failed: {error_msg}")
+        if task_id in tasks:
+            tasks[task_id]['status'] = f'Error: {error_msg}'
+            tasks[task_id]['stage'] = 'Failed'
 
+# ============================================================
+# WORKER (Sequential mode support)
+# ============================================================
 
-# --- 워커 및 라우팅 ---
 def worker():
+    """Worker thread that processes downloads from queue"""
+    global active_downloads
+    
     while True:
         task_id = download_queue.get()
         if task_id is None:
             break
+        
+        with queue_lock:
+            active_downloads += 1
+        
         if task_id in tasks:
-            tasks[task_id]['status'] = '다운로드 중'
-            download_video(task_id, tasks[task_id]['url'])
+            tasks[task_id]['status'] = 'Downloading'
+            tasks[task_id]['stage'] = 'Initializing'
+            download_video(task_id, tasks[task_id]['url'], tasks[task_id].get('selected_format'))
+        
+        with queue_lock:
+            active_downloads -= 1
+        
+        # Delay between downloads if sequential mode is on
+        if settings.get('sequential_mode', True):
+            delay = settings.get('delay_between_downloads', 3)
+            time.sleep(delay)
+        
         download_queue.task_done()
 
-for _ in range(settings.get('max_concurrent', 4)):
-    threading.Thread(target=worker, daemon=True).start()
+# Start workers (respects max_concurrent setting)
+def start_workers():
+    for _ in range(settings.get('max_concurrent', 1)):
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+start_workers()
+
+# ============================================================
+# API ROUTES
+# ============================================================
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+# --- Download endpoints ---
 @app.route('/download', methods=['POST'])
 def handle_download():
+    """Add a single download to queue"""
     url = request.form.get('url', '').strip()
+    selected_format = request.form.get('format', None)
+    
     if not url:
-        return jsonify({"status": "error", "message": "URL 입력"}), 400
+        return jsonify({"status": "error", "message": "URL required"}), 400
+    
+    # Convert JAV code to URL if needed
+    if is_jav_code(url):
+        url = jav_code_to_url(url)
+    
     task_id = str(uuid.uuid4())
-    tasks[task_id] = {'url': url, 'status': '대기 중', 'progress': '0%'}
+    tasks[task_id] = {
+        'url': url,
+        'status': 'Waiting',
+        'progress': '0%',
+        'stage': 'Queued',
+        'selected_format': selected_format,
+        'created_at': time.time()
+    }
     download_queue.put(task_id)
-    return jsonify({"status": "success", "task_id": task_id})
+    
+    return jsonify({"status": "success", "task_id": task_id, "message": "Added to queue"})
 
+@app.route('/batch-download', methods=['POST'])
+def handle_batch_download():
+    """Add multiple downloads to queue"""
+    data = request.json
+    urls = data.get('urls', [])
+    
+    if not urls:
+        return jsonify({"status": "error", "message": "No URLs provided"}), 400
+    
+    task_ids = []
+    for url in urls:
+        url = url.strip()
+        if not url:
+            continue
+        
+        if is_jav_code(url):
+            url = jav_code_to_url(url)
+        
+        task_id = str(uuid.uuid4())
+        tasks[task_id] = {
+            'url': url,
+            'status': 'Waiting',
+            'progress': '0%',
+            'stage': 'Queued',
+            'created_at': time.time()
+        }
+        download_queue.put(task_id)
+        task_ids.append(task_id)
+    
+    return jsonify({"status": "success", "task_ids": task_ids, "count": len(task_ids)})
+
+@app.route('/api/info', methods=['POST'])
+def get_info():
+    """Get video information (resolutions, duration) without downloading"""
+    data = request.json
+    url = data.get('url', '').strip()
+    
+    if not url:
+        return jsonify({"status": "error", "message": "URL required"}), 400
+    
+    info = get_video_info(url)
+    if info:
+        return jsonify({"status": "success", "info": info})
+    else:
+        return jsonify({"status": "error", "message": "Failed to get video info"}), 500
+
+# --- Queue management endpoints ---
 @app.route('/api/tasks', methods=['GET'])
 def get_tasks():
     return jsonify(tasks)
@@ -342,6 +613,56 @@ def delete_task(task_id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"}), 404
 
+@app.route('/api/queue/clear', methods=['DELETE'])
+def clear_queue():
+    """Clear all waiting tasks (not active downloads)"""
+    global download_queue
+    cleared = []
+    
+    # Create new queue
+    new_queue = queue.Queue()
+    
+    # Keep only active downloads
+    for task_id, task in list(tasks.items()):
+        if task['status'] == 'Downloading':
+            new_queue.put(task_id)
+        else:
+            cleared.append(task_id)
+            del tasks[task_id]
+    
+    download_queue = new_queue
+    return jsonify({"status": "success", "cleared": len(cleared)})
+
+@app.route('/api/queue/clean', methods=['DELETE'])
+def clean_queue():
+    """Remove completed and failed tasks"""
+    cleaned = []
+    for task_id, task in list(tasks.items()):
+        if task['status'] in ['Completed', 'Cancelled'] or task['status'].startswith('Error'):
+            cleaned.append(task_id)
+            del tasks[task_id]
+    return jsonify({"status": "success", "cleaned": len(cleaned)})
+
+@app.route('/api/queue/stats', methods=['GET'])
+def queue_stats():
+    """Get queue statistics"""
+    waiting = sum(1 for t in tasks.values() if t['status'] == 'Waiting')
+    downloading = sum(1 for t in tasks.values() if t['status'] == 'Downloading')
+    completed = sum(1 for t in tasks.values() if t['status'] == 'Completed')
+    failed = sum(1 for t in tasks.values() if t['status'].startswith('Error'))
+    
+    return jsonify({
+        'waiting': waiting,
+        'downloading': downloading,
+        'completed': completed,
+        'failed': failed,
+        'total': len(tasks),
+        'active_downloads': active_downloads,
+        'max_concurrent': settings.get('max_concurrent', 1),
+        'sequential_mode': settings.get('sequential_mode', True)
+    })
+
+# --- File management endpoints ---
 @app.route('/api/files', methods=['GET'])
 def list_files():
     files = []
@@ -354,13 +675,65 @@ def list_files():
     files.sort(key=lambda x: x['modified'], reverse=True)
     return jsonify(files)
 
+@app.route('/api/files/<path:filename>/download', methods=['GET'])
+def download_file(filename):
+    fp = os.path.join(DOWNLOAD_DIR, filename)
+    if os.path.exists(fp):
+        return send_file(fp, as_attachment=True)
+    return jsonify({"status": "error"}), 404
+
+@app.route('/api/files/<path:filename>/stream', methods=['GET'])
+def stream_file(filename):
+    fp = os.path.join(DOWNLOAD_DIR, filename)
+    if os.path.exists(fp):
+        return send_file(fp)
+    return jsonify({"status": "error"}), 404
+
 @app.route('/api/files/<path:filename>', methods=['DELETE'])
 def delete_file(filename):
     fp = os.path.join(DOWNLOAD_DIR, filename)
     if os.path.exists(fp):
         os.remove(fp)
-        return jsonify({"status": "success"})
+        return jsonify({"status": "success", "message": "File deleted"})
     return jsonify({"status": "error"}), 404
 
+@app.route('/api/logs/<task_id>', methods=['GET'])
+def get_task_log(task_id):
+    """Get log file for a specific task"""
+    log_file = os.path.join(LOGS_DIR, f'task_{task_id}.log')
+    if os.path.exists(log_file):
+        with open(log_file, 'r', encoding='utf-8') as f:
+            return jsonify({"status": "success", "log": f.read()})
+    return jsonify({"status": "error", "message": "Log not found"}), 404
+
+# --- Settings endpoints ---
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    return jsonify(settings)
+
+@app.route('/api/settings', methods=['PUT'])
+def update_settings():
+    global settings
+    new_settings = request.json
+    
+    # Update settings
+    settings.update(new_settings)
+    save_settings(settings)
+    
+    return jsonify({"status": "success", "message": "Settings saved"})
+
+# ============================================================
+# MAIN
+# ============================================================
+
 if __name__ == '__main__':
+    print(f"\n{'='*50}")
+    print(f"MissAV Downloader Started")
+    print(f"Download directory: {DOWNLOAD_DIR}")
+    print(f"Settings file: {SETTINGS_FILE}")
+    print(f"Logs directory: {LOGS_DIR}")
+    print(f"FFmpeg: {FFMPEG_PATH}")
+    print(f"Sequential mode: {settings.get('sequential_mode', True)}")
+    print(f"Max concurrent: {settings.get('max_concurrent', 1)}")
+    print(f"{'='*50}\n")
     app.run(host='0.0.0.0', port=5000, debug=False)
