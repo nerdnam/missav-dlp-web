@@ -63,7 +63,7 @@ def start_spoofdpi():
 start_spoofdpi()
 
 app = Flask(__name__)
-
+app = Flask(__name__, static_folder='templates', static_url_path='/static')
 download_queue = queue.Queue()
 tasks = {}
 
