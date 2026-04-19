@@ -1,0 +1,17 @@
+{
+  "max_concurrent": 1,
+  "filename_template": "[%(id)s] %(title).60s.%(ext)s",
+  "spoofdpi_enabled": true,
+  "video_quality": "best",
+  "mirrors": [
+    "missav.ai",
+    "missav.net",
+    "missav123.com",
+    "missav.com",
+    "missav.ws"
+  ],
+  "download_dir": "C:\\Users\\user\\OneDrive\\Desktop\\python\\Scale\\missav-dlp-web\\downloads",
+  "delay_between_downloads": 3,
+  "max_retries": 3,
+  "sequential_mode": true
+}

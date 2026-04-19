@@ -1,0 +1,713 @@
+/* style.css - Main stylesheet for MissAV Downloader */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans JP',
+                 'Hiragino Kaku Gothic ProN', 'Meiryo', Roboto, sans-serif;
+    background: #ffffff;
+    color: #0f172a;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+    width: 64px;
+    background: #f1f5f9;
+    border-right: 1px solid #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 0;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.sidebar-logo {
+    color: #3b82f6;
+    font-weight: 800;
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+
+.sidebar-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    transition: all 0.15s;
+    background: #e2e8f0;
+    color: #64748b;
+}
+
+.sidebar-btn.active {
+    background: #3b82f6;
+    color: #ffffff;
+}
+
+.sidebar-btn:hover:not(.active) {
+    background: #cbd5e1;
+}
+
+/* --- Main content --- */
+.main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px;
+}
+
+.page {
+    display: none;
+}
+
+.page.active {
+    display: block;
+}
+
+.page-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 2px;
+}
+
+.page-subtitle {
+    color: #94a3b8;
+    font-size: 13px;
+    margin-bottom: 24px;
+}
+
+/* --- URL Bar with JAV Search --- */
+.url-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.url-bar input {
+    flex: 1;
+    padding: 12px 16px;
+    border: 2px solid #e2e8f0;
+    border-radius: 10px;
+    font-size: 14px;
+    background: #f8fafc;
+    outline: none;
+    transition: border-color 0.15s;
+    min-width: 200px;
+}
+
+.url-bar input:focus {
+    border-color: #3b82f6;
+}
+
+.url-bar button {
+    padding: 12px 28px;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.url-bar button:hover {
+    background: #2563eb;
+}
+
+.jav-search-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    padding: 12px;
+    background: #f0f9ff;
+    border-radius: 10px;
+    border: 1px solid #bae6fd;
+}
+
+.jav-search-bar input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    background: white;
+    outline: none;
+    font-family: monospace;
+    text-transform: uppercase;
+}
+
+.jav-search-bar input:focus {
+    border-color: #3b82f6;
+}
+
+.jav-search-bar button {
+    padding: 10px 20px;
+    background: #10b981;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.jav-search-bar button:hover {
+    background: #059669;
+}
+
+.jav-hint {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+/* --- Stats badges --- */
+.stats {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.stat-badge {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.stat-downloading {
+    background: #eff6ff;
+    color: #3b82f6;
+}
+
+.stat-done {
+    background: #f0fdf4;
+    color: #16a34a;
+}
+
+.stat-waiting {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.stat-error {
+    background: #fef2f2;
+    color: #ef4444;
+}
+
+/* --- Task card --- */
+.task-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    transition: border-color 0.15s;
+}
+
+.task-card.done {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+
+.task-card.error {
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+
+.task-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.task-title {
+    font-size: 14px;
+    font-weight: 500;
+    word-break: break-word;
+    flex: 1;
+    line-height: 1.4;
+}
+
+.task-meta {
+    color: #94a3b8;
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.task-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* --- Progress bar --- */
+.progress-wrap {
+    margin-top: 10px;
+}
+
+.progress-bg {
+    background: #e2e8f0;
+    border-radius: 6px;
+    height: 5px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    height: 100%;
+    border-radius: 6px;
+    transition: width 0.4s ease;
+}
+
+.progress-text {
+    color: #94a3b8;
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+/* --- Buttons --- */
+.btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+}
+
+.btn:hover {
+    opacity: 0.85;
+}
+
+.btn-primary {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+.btn-danger {
+    background: #fef2f2;
+    color: #ef4444;
+}
+
+.btn-ghost {
+    background: #f1f5f9;
+    color: #94a3b8;
+}
+
+.btn-preview {
+    background: #f0f9ff;
+    color: #3b82f6;
+}
+
+/* --- File manager --- */
+.files-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.files-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.search-input {
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 12px;
+    background: #f8fafc;
+    outline: none;
+    width: 180px;
+}
+
+.search-input:focus {
+    border-color: #3b82f6;
+}
+
+.sort-select {
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 12px;
+    background: #f8fafc;
+    cursor: pointer;
+    outline: none;
+}
+
+.file-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.file-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.file-icon {
+    width: 40px;
+    height: 40px;
+    background: #e2e8f0;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.file-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+}
+
+.file-meta {
+    color: #94a3b8;
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+.file-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* --- Video modal --- */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal-content {
+    background: #0f172a;
+    border-radius: 12px;
+    overflow: hidden;
+    width: 90vw;
+    max-width: 960px;
+    position: relative;
+}
+
+.modal-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    z-index: 10;
+}
+
+.modal-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.modal-content video {
+    width: 100%;
+    display: block;
+    max-height: 80vh;
+}
+
+/* --- Message toast --- */
+.toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 2000;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: all 0.3s;
+    pointer-events: none;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.toast.success {
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+
+.toast.error {
+    background: #fef2f2;
+    color: #ef4444;
+    border: 1px solid #fecaca;
+}
+
+/* --- Settings --- */
+.settings-form {
+    max-width: 560px;
+}
+
+.setting-group {
+    margin-bottom: 24px;
+}
+
+.setting-label {
+    font-size: 14px;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 4px;
+}
+
+.setting-desc {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 8px;
+}
+
+.setting-input {
+    padding: 10px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    background: #f8fafc;
+    outline: none;
+    width: 120px;
+    transition: border-color 0.15s;
+}
+
+.setting-input:focus {
+    border-color: #3b82f6;
+}
+
+.setting-input-wide {
+    padding: 10px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: monospace;
+    background: #f8fafc;
+    outline: none;
+    width: 100%;
+    transition: border-color 0.15s;
+}
+
+.setting-input-wide:focus {
+    border-color: #3b82f6;
+}
+
+.setting-select {
+    padding: 10px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    background: #f8fafc;
+    outline: none;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+.setting-textarea {
+    padding: 10px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: monospace;
+    background: #f8fafc;
+    outline: none;
+    width: 100%;
+    resize: vertical;
+    transition: border-color 0.15s;
+}
+
+.setting-textarea:focus {
+    border-color: #3b82f6;
+}
+
+/* Toggle switch */
+.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.toggle input {
+    display: none;
+}
+
+.toggle-slider {
+    width: 44px;
+    height: 24px;
+    background: #cbd5e1;
+    border-radius: 12px;
+    position: relative;
+    transition: background 0.2s;
+}
+
+.toggle-slider::after {
+    content: '';
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    transition: transform 0.2s;
+}
+
+.toggle input:checked+.toggle-slider {
+    background: #3b82f6;
+}
+
+.toggle input:checked+.toggle-slider::after {
+    transform: translateX(20px);
+}
+
+.toggle-text {
+    font-size: 13px;
+    color: #64748b;
+}
+
+.setting-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.btn-save {
+    padding: 10px 28px;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-save:hover {
+    background: #2563eb;
+}
+
+.btn-reset {
+    padding: 10px 20px;
+    background: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-reset:hover {
+    background: #e2e8f0;
+}
+
+/* --- Empty state --- */
+.empty {
+    text-align: center;
+    padding: 48px 0;
+    color: #94a3b8;
+    font-size: 14px;
+}
+
+/* --- JAV Code highlight --- */
+.jav-code {
+    background: #fef3c7;
+    color: #d97706;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-weight: 600;
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .main {
+        padding: 16px;
+    }
+
+    .url-bar {
+        flex-direction: column;
+    }
+
+    .file-card {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .file-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .files-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .files-controls {
+        justify-content: space-between;
+    }
+}

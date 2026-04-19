@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MissAV Downloader - JAV Video Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-logo">M</div>
+        <button class="sidebar-btn active" data-page="download" title="Download">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+        </button>
+        <button class="sidebar-btn" data-page="files" title="File Manager">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+        </button>
+        <div style="flex:1"></div>
+        <button class="sidebar-btn" data-page="settings" title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+            </svg>
+        </button>
+    </nav>
+
+    <!-- Main content -->
+    <div class="main">
+        <!-- Download Page -->
+        <div id="page-download" class="page active">
+            <div class="page-title">Download</div>
+            <div class="page-subtitle">Enter MissAV URL or JAV code to download</div>
+
+            <!-- JAV Quick Search -->
+            <div class="jav-search-bar">
+                <input type="text" id="javCode" placeholder="Enter JAV code (e.g., ABP-123, SSIS-456)">
+                <button id="searchJavBtn">🔍 Quick Search</button>
+            </div>
+            <div class="jav-hint">💡 Tip: Enter JAV code to auto-generate the download URL, or paste full MissAV URL below</div>
+
+            <!-- URL Input -->
+            <form id="downloadForm" class="url-bar">
+                <input type="text" id="url" placeholder="https://missav.ws/ko/... or paste any MissAV URL" required>
+                <button type="submit">Add to Queue</button>
+            </form>
+
+            <div class="stats" id="stats"></div>
+            <div id="taskList"></div>
+        </div>
+
+        <!-- Files Page -->
+        <div id="page-files" class="page">
+            <div class="files-header">
+                <div>
+                    <div class="page-title">File Manager</div>
+                    <div class="page-subtitle" id="filesSummary">Files stored on server</div>
+                </div>
+                <div class="files-controls">
+                    <input class="search-input" id="fileSearch" type="text" placeholder="Search...">
+                    <select class="sort-select" id="fileSort">
+                        <option value="date">By Date</option>
+                        <option value="name">By Name</option>
+                        <option value="size">By Size</option>
+                    </select>
+                </div>
+            </div>
+            <div id="fileList"></div>
+        </div>
+
+        <!-- Settings Page -->
+        <div id="page-settings" class="page">
+            <div class="page-title">Settings</div>
+            <div class="page-subtitle">Manage download and system preferences</div>
+
+            <div class="settings-form">
+                <div class="setting-group">
+                    <label class="setting-label">Concurrent Downloads</label>
+                    <div class="setting-desc">Maximum number of simultaneous downloads on the server (restart required)</div>
+                    <input type="number" id="set-max-concurrent" class="setting-input" min="1" max="8" value="4">
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">Filename Template</label>
+                    <div class="setting-desc">yt-dlp filename format. %(id)s=Video ID, %(title)s=Title, .60s=60 char limit</div>
+                    <input type="text" id="set-filename-template" class="setting-input-wide" value="[%(id)s] %(title).60s.%(ext)s">
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">SpoofDPI Proxy</label>
+                    <div class="setting-desc">Enable SNI blocking bypass proxy</div>
+                    <label class="toggle">
+                        <input type="checkbox" id="set-spoofdpi" checked>
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-text" id="spoofdpi-text">Enabled</span>
+                    </label>
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">Video Quality</label>
+                    <div class="setting-desc">Maximum resolution to download</div>
+                    <select id="set-quality" class="setting-select">
+                        <option value="best">Best Quality (best)</option>
+                        <option value="1080">1080p</option>
+                        <option value="720">720p</option>
+                        <option value="480">480p</option>
+                    </select>
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">Mirror Domains</label>
+                    <div class="setting-desc">MissAV mirror domains (one per line)</div>
+                    <textarea id="set-mirrors" class="setting-textarea" rows="5">missav.ai
+missav.net
+missav123.com
+missav.com
+missav.ws</textarea>
+                </div>
+
+                <div class="setting-actions">
+                    <button class="btn-save" id="saveSettings">Save</button>
+                    <button class="btn-reset" id="resetSettings">Reset to Default</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video preview modal -->
+    <div class="modal-overlay" id="videoModal">
+        <div class="modal-content">
+            <button class="modal-close" id="modalClose">&times;</button>
+            <video id="videoPlayer" controls></video>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // --- Utility Functions ---
+        function formatSize(bytes) {
+            if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+            if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+            if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        function formatDate(ts) {
+            const d = new Date(ts * 1000);
+            return d.toLocaleString('en-US', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function showToast(msg, type) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast ' + type + ' show';
+            setTimeout(() => t.classList.remove('show'), 2500);
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // --- JAV Code to URL Converter ---
+        function javCodeToUrl(code) {
+            // Clean and uppercase the JAV code
+            code = code.trim().toUpperCase();
+            // Pattern: 2-5 letters followed by dash and 3-5 digits
+            const javPattern = /^([A-Z]{2,5})-(\d{3,5})$/;
+            if (!javPattern.test(code)) {
+                return null;
+            }
+            // Use the first mirror from settings (default missav.ws)
+            const mirror = 'missav.ws';
+            return `https://${mirror}/ko/${code}`;
+        }
+
+        // --- SPA Routing ---
+        document.querySelectorAll('.sidebar-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('page-' + btn.dataset.page).classList.add('active');
+                if (btn.dataset.page === 'files') fetchFiles();
+                if (btn.dataset.page === 'settings') loadSettingsUI();
+            });
+        });
+
+        // --- JAV Quick Search ---
+        document.getElementById('searchJavBtn').addEventListener('click', function() {
+            const javCode = document.getElementById('javCode').value.trim();
+            if (!javCode) {
+                showToast('Please enter a JAV code (e.g., ABP-123)', 'error');
+                return;
+            }
+
+            const url = javCodeToUrl(javCode);
+            if (!url) {
+                showToast('Invalid JAV code format. Example: ABP-123, SSIS-456', 'error');
+                return;
+            }
+
+            // Auto-fill the URL input
+            document.getElementById('url').value = url;
+            showToast(`✓ Converted ${javCode} to URL`, 'success');
+            
+            // Optional: Auto-submit the form
+            if (confirm(`Download ${javCode} now?`)) {
+                document.getElementById('downloadForm').dispatchEvent(new Event('submit'));
+                document.getElementById('javCode').value = '';
+            }
+        });
+
+        // Allow Enter key in JAV input
+        document.getElementById('javCode').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                document.getElementById('searchJavBtn').click();
+            }
+        });
+
+        // --- Download Form ---
+        document.getElementById('downloadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const urlInput = document.getElementById('url');
+            const url = urlInput.value.trim();
+            if (!url) return;
+
+            fetch('/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ url })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    showToast(data.message, data.status === 'success' ? 'success' : 'error');
+                    urlInput.value = '';
+                    fetchTasks();
+                });
+        });
+
+        // --- Tasks ---
+        function fetchTasks() {
+            fetch('/api/tasks').then(r => r.json()).then(tasks => {
+                const entries = Object.entries(tasks).reverse();
+                let downloading = 0,
+                    done = 0,
+                    waiting = 0,
+                    errors = 0;
+                entries.forEach(([, t]) => {
+                    if (t.status.includes('Downloading') || t.status === '다운로드 중') downloading++;
+                    else if (t.status.includes('Complete') || t.status === '완료') done++;
+                    else if (t.status.includes('Waiting') || t.status === '대기 중') waiting++;
+                    else if (t.status.includes('Error') || t.status.includes('에러')) errors++;
+                });
+
+                const statsEl = document.getElementById('stats');
+                let statsHtml = '';
+                if (downloading) statsHtml += '<span class="stat-badge stat-downloading">⬇ Downloading ' + downloading + '</span>';
+                if (done) statsHtml += '<span class="stat-badge stat-done">✓ Complete ' + done + '</span>';
+                if (waiting) statsHtml += '<span class="stat-badge stat-waiting">⏳ Waiting ' + waiting + '</span>';
+                if (errors) statsHtml += '<span class="stat-badge stat-error">✗ Error ' + errors + '</span>';
+                statsEl.innerHTML = statsHtml;
+
+                const listEl = document.getElementById('taskList');
+                if (entries.length === 0) {
+                    listEl.innerHTML = '<div class="empty">No downloads in queue</div>';
+                    return;
+                }
+
+                listEl.innerHTML = entries.map(([id, t]) => {
+                    let cls = '';
+                    if (t.status.includes('Complete') || t.status === '완료') cls = 'done';
+                    else if (t.status.includes('Error') || t.status === '에러') cls = 'error';
+
+                    let progressHtml = '';
+                    if (t.status === 'Downloading' || t.status === '다운로드 중') {
+                        const pct = t.progress || '0%';
+                        progressHtml =
+                            '<div class="progress-wrap">' +
+                            '<div class="progress-bg"><div class="progress-fill" style="width:' + pct + '"></div></div>' +
+                            '<div class="progress-text">' + escapeHtml(pct) + '</div>' +
+                            '</div>';
+                    }
+
+                    let actions = '';
+                    if (t.status === 'Downloading' || t.status === '다운로드 중') {
+                        actions = '<button class="btn btn-danger" onclick="deleteTask(\'' + id + '\')">Cancel</button>';
+                    } else if ((t.status.includes('Complete') || t.status === '완료') && t.filename) {
+                        actions =
+                            '<a class="btn btn-primary" href="/api/files/' + encodeURIComponent(t.filename) + '/download" style="text-decoration:none">⬇ Download</a>' +
+                            '<button class="btn btn-ghost" onclick="deleteTask(\'' + id + '\')">✕</button>';
+                    } else {
+                        actions = '<button class="btn btn-ghost" onclick="deleteTask(\'' + id + '\')">✕</button>';
+                    }
+
+                    // Detect JAV code in title
+                    let titleText = escapeHtml(t.filename || t.url);
+                    const javMatch = titleText.match(/([A-Z]{2,5}-\d{3,5})/);
+                    if (javMatch) {
+                        titleText = titleText.replace(javMatch[0], `<span class="jav-code">${javMatch[0]}</span>`);
+                    }
+
+                    const metaText = (t.status.includes('Complete') || t.status === '완료') && t.filesize ?
+                        formatSize(t.filesize) + ' · Complete' :
+                        escapeHtml(t.status);
+
+                    return '<div class="task-card ' + cls + '">' +
+                        '<div class="task-top">' +
+                        '<div style="flex:1;min-width:0">' +
+                        '<div class="task-title">' + titleText + '</div>' +
+                        '<div class="task-meta">' + metaText + '</div>' +
+                        '</div>' +
+                        '<div class="task-actions">' + actions + '</div>' +
+                        '</div>' +
+                        progressHtml +
+                        '</div>';
+                }).join('');
+            });
+        }
+
+        function deleteTask(id) {
+            fetch('/api/tasks/' + id, {
+                method: 'DELETE'
+            }).then(() => fetchTasks());
+        }
+
+        setInterval(fetchTasks, 1500);
+        fetchTasks();
+
+        // --- Files ---
+        let allFiles = [];
+
+        function fetchFiles() {
+            fetch('/api/files').then(r => r.json()).then(files => {
+                allFiles = files;
+                renderFiles();
+            });
+        }
+
+        function renderFiles() {
+            let files = allFiles.slice();
+            const query = document.getElementById('fileSearch').value.toLowerCase();
+            if (query) files = files.filter(f => f.name.toLowerCase().includes(query));
+
+            const sort = document.getElementById('fileSort').value;
+            if (sort === 'name') files.sort((a, b) => a.name.localeCompare(b.name));
+            else if (sort === 'size') files.sort((a, b) => b.size - a.size);
+            else files.sort((a, b) => b.modified - a.modified);
+
+            const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
+            document.getElementById('filesSummary').textContent =
+                files.length + ' files stored · ' + formatSize(totalSize);
+
+            const listEl = document.getElementById('fileList');
+            if (files.length === 0) {
+                listEl.innerHTML = '<div class="empty">No files found</div>';
+                return;
+            }
+
+            listEl.innerHTML = files.map(f => {
+                const encodedName = encodeURIComponent(f.name);
+                // Highlight JAV code in filename
+                let displayName = escapeHtml(f.name);
+                const javMatch = displayName.match(/([A-Z]{2,5}-\d{3,5})/);
+                if (javMatch) {
+                    displayName = displayName.replace(javMatch[0], `<span class="jav-code">${javMatch[0]}</span>`);
+                }
+
+                return '<div class="file-card">' +
+                    '<div class="file-info">' +
+                    '<div class="file-icon">🎬</div>' +
+                    '<div style="min-width:0">' +
+                    '<div class="file-name" title="' + escapeHtml(f.name) + '">' + displayName + '</div>' +
+                    '<div class="file-meta">' + formatSize(f.size) + ' · ' + formatDate(f.modified) + '</div>' +
+                    '</div>' +
+                    '</div>' +
+                    '<div class="file-actions">' +
+                    '<button class="btn btn-preview" onclick="previewFile(\'' + encodedName + '\')">▶ Preview</button>' +
+                    '<a class="btn btn-primary" href="/api/files/' + encodedName + '/download" style="text-decoration:none">⬇ Download</a>' +
+                    '<button class="btn btn-danger" onclick="deleteFile(\'' + encodedName + '\')">Delete</button>' +
+                    '</div>' +
+                    '</div>';
+            }).join('');
+        }
+
+        document.getElementById('fileSearch').addEventListener('input', renderFiles);
+        document.getElementById('fileSort').addEventListener('change', renderFiles);
+
+        function deleteFile(name) {
+            if (!confirm('Delete this file from server?')) return;
+            fetch('/api/files/' + name, {
+                    method: 'DELETE'
+                })
+                .then(r => r.json())
+                .then(data => {
+                    showToast(data.message, data.status === 'success' ? 'success' : 'error');
+                    fetchFiles();
+                });
+        }
+
+        // --- Video Modal ---
+        function previewFile(name) {
+            const player = document.getElementById('videoPlayer');
+            player.src = '/api/files/' + name + '/stream';
+            document.getElementById('videoModal').classList.add('active');
+            player.play();
+        }
+
+        document.getElementById('modalClose').addEventListener('click', closeModal);
+        document.getElementById('videoModal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        function closeModal() {
+            const player = document.getElementById('videoPlayer');
+            player.pause();
+            player.src = '';
+            document.getElementById('videoModal').classList.remove('active');
+        }
+
+        // --- Settings ---
+        const defaultSettings = {
+            max_concurrent: 4,
+            filename_template: '[%(id)s] %(title).60s.%(ext)s',
+            spoofdpi_enabled: true,
+            video_quality: 'best',
+            mirrors: ['missav.ai', 'missav.net', 'missav123.com', 'missav.com', 'missav.ws']
+        };
+
+        function loadSettingsUI() {
+            fetch('/api/settings').then(r => r.json()).then(s => {
+                document.getElementById('set-max-concurrent').value = s.max_concurrent || 4;
+                document.getElementById('set-filename-template').value = s.filename_template || defaultSettings.filename_template;
+                document.getElementById('set-spoofdpi').checked = s.spoofdpi_enabled !== false;
+                document.getElementById('set-quality').value = s.video_quality || 'best';
+                document.getElementById('set-mirrors').value = (s.mirrors || defaultSettings.mirrors).join('\n');
+                updateToggleText();
+            });
+        }
+
+        function updateToggleText() {
+            var checked = document.getElementById('set-spoofdpi').checked;
+            document.getElementById('spoofdpi-text').textContent = checked ? 'Enabled' : 'Disabled';
+        }
+
+        document.getElementById('set-spoofdpi').addEventListener('change', updateToggleText);
+
+        document.getElementById('saveSettings').addEventListener('click', function() {
+            var mirrors = document.getElementById('set-mirrors').value
+                .split('\n')
+                .map(function(s) {
+                    return s.trim();
+                })
+                .filter(function(s) {
+                    return s.length > 0;
+                });
+
+            var data = {
+                max_concurrent: parseInt(document.getElementById('set-max-concurrent').value) || 4,
+                filename_template: document.getElementById('set-filename-template').value.trim() || defaultSettings.filename_template,
+                spoofdpi_enabled: document.getElementById('set-spoofdpi').checked,
+                video_quality: document.getElementById('set-quality').value,
+                mirrors: mirrors
+            };
+
+            fetch('/api/settings', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                })
+                .then(function(r) {
+                    return r.json();
+                })
+                .then(function(res) {
+                    showToast(res.message, res.status === 'success' ? 'success' : 'error');
+                });
+        });
+
+        document.getElementById('resetSettings').addEventListener('click', function() {
+            if (!confirm('Reset all settings to default?')) return;
+            fetch('/api/settings', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(defaultSettings)
+                })
+                .then(function(r) {
+                    return r.json();
+                })
+                .then(function(res) {
+                    showToast('Settings reset to default', 'success');
+                    loadSettingsUI();
+                });
+        });
+    </script>
+</body>
+</html>
