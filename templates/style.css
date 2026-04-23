@@ -279,3 +279,29 @@ button:hover {
         flex-direction: column;
     }
 }
+
+/* Add to existing CSS */
+.header-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.language-select {
+    padding: 8px 12px;
+    background: #0f3460;
+    color: #00d9ff;
+    border: 1px solid #00d9ff;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.language-select:hover {
+    background: #1a4a7a;
+}
+
+.language-select:focus {
+    outline: none;
+    border-color: #00d9ff;
+}

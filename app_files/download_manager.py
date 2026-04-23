@@ -1,3 +1,5 @@
+# app_files/download_manager.py
+
 import os
 import time
 import threading
@@ -7,14 +9,15 @@ import re
 import logging
 from pathlib import Path
 import yt_dlp
-from extractor import MyCustomMissAV
-from config_manager import load_settings
-from utils import is_jav_code, jav_code_to_url
+from app_files.extractor import MyCustomMissAV
+from app_files.config_manager import load_settings
+from app_files.utils import is_jav_code, jav_code_to_url
+from app_files.paths import DOWNLOADS_DIR, LOGS_DIR, ROOT_DIR, FFMPEG_DIR
 
 settings = load_settings()
-DOWNLOAD_DIR = settings.get('download_dir', './downloads')
-LOGS_DIR = Path(__file__).parent / 'logs'
+DOWNLOAD_DIR = Path(settings.get('download_dir', str(DOWNLOADS_DIR)))
 LOGS_DIR.mkdir(exist_ok=True)
+DOWNLOAD_DIR.mkdir(exist_ok=True)  # Ensure download directory exists
 
 download_queue = queue.Queue()
 tasks = {}
@@ -186,13 +189,13 @@ def download_video(task_id, url, selected_format=None):
         else:
             format_selector = 'bestvideo+bestaudio/best'
     
-    base_dir = Path(__file__).parent
-    ffmpeg_path = base_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
+    # Use root ffmpeg path
+    ffmpeg_path = FFMPEG_DIR / 'bin' / 'ffmpeg.exe'
     if not ffmpeg_path.exists():
         ffmpeg_path = 'ffmpeg'
     
     ydl_opts = {
-        'outtmpl': os.path.join(DOWNLOAD_DIR, tmpl),
+        'outtmpl': str(DOWNLOAD_DIR / tmpl),
         'format': format_selector,
         'merge_output_format': 'mp4',
         'proxy': None,
@@ -222,8 +225,8 @@ def download_video(task_id, url, selected_format=None):
             ydl.add_default_info_extractors()
             ydl.download([url])
         
-        download_path = Path(DOWNLOAD_DIR)
-        for f in download_path.iterdir():
+        # Search for downloaded file
+        for f in DOWNLOAD_DIR.iterdir():
             if f.is_file() and (task_id in f.name or url.split('/')[-1] in f.name):
                 task['filename'] = f.name
                 task['filesize'] = f.stat().st_size

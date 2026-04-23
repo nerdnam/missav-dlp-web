@@ -1,9 +1,9 @@
+# app_files/config_manager.py
+
 import os
 import json
 from pathlib import Path
-
-BASE_DIR = Path(__file__).parent
-SETTINGS_FILE = BASE_DIR / '.settings.json'
+from app_files.paths import SETTINGS_FILE, ROOT_DIR
 
 DEFAULT_SETTINGS = {
     'max_concurrent': 1,
@@ -11,14 +11,13 @@ DEFAULT_SETTINGS = {
     'spoofdpi_enabled': True,
     'video_quality': 'best',
     'mirrors': ['missav.ai', 'missav.net', 'missav123.com', 'missav.com', 'missav.ws'],
-    'download_dir': str(BASE_DIR / 'downloads'),
+    'download_dir': str(ROOT_DIR / 'downloads'),  # Changed to root
     'delay_between_downloads': 3,
     'max_retries': 3,
     'sequential_mode': True
 }
 
 def load_settings():
-    global DOWNLOAD_DIR
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:

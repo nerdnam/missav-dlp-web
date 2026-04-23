@@ -3,44 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MissAV Downloader</title>
+    <title>🎬 MissAV Downloader</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>🎬 MissAV Downloader</h1>
-        <button id="settingsBtn" class="btn-secondary">⚙️ Settings</button>
+        <h1>🎬 <span data-i18n="app_title">MissAV Downloader</span></h1>
+        <div class="header-controls">
+            <select id="languageSelect" class="language-select">
+                <option value="en">🇬🇧 English</option>
+                <option value="ko">🇰🇷 한국어</option>
+                <option value="ja">🇯🇵 日本語</option>
+                <option value="zh">🇨🇳 中文</option>
+            </select>
+            <button id="settingsBtn" class="btn-secondary">⚙️ <span data-i18n="settings">Settings</span></button>
+        </div>
     </div>
 
     <!-- URL Input -->
     <div class="card">
         <div class="url-bar">
-            <input type="text" id="urlInput" placeholder="Enter URL or JAV code (e.g., ABP-123)">
-            <button id="getInfoBtn">🔍 Get Info</button>
-            <button id="batchBtn" class="btn-secondary">📋 Batch Add</button>
+            <input type="text" id="urlInput" data-i18n-placeholder="url_placeholder" placeholder="Enter URL or JAV code (e.g., ABP-123)">
+            <button id="getInfoBtn">🔍 <span data-i18n="get_info">Get Info</span></button>
+            <button id="batchBtn" class="btn-secondary">📋 <span data-i18n="batch_add">Batch Add</span></button>
         </div>
         <div id="batchPanel" class="hidden">
-            <textarea id="batchUrls" class="batch-input" placeholder="Enter one URL or JAV code per line..."></textarea>
+            <textarea id="batchUrls" class="batch-input" data-i18n-placeholder="batch_placeholder" placeholder="Enter one URL or JAV code per line..."></textarea>
             <div class="button-group">
-                <button id="addBatchBtn">➕ Add All to Queue</button>
-                <button id="cancelBatchBtn" class="btn-secondary">Cancel</button>
+                <button id="addBatchBtn">➕ <span data-i18n="add_all">Add All to Queue</span></button>
+                <button id="cancelBatchBtn" class="btn-secondary"><span data-i18n="cancel">Cancel</span></button>
             </div>
         </div>
     </div>
 
     <!-- Video Info -->
     <div class="card" id="infoCard" style="display:none">
-        <h3 id="videoTitle">-</h3>
-        <p>Code: <span id="videoCode">-</span> | Duration: <span id="videoDuration">-</span></p>
-        <div id="previewWarning" class="warning hidden">⚠️ Preview video (short version)</div>
+        <h3><span data-i18n="video_info">Video Information</span></h3>
+        <p><span data-i18n="code">Code</span>: <span id="videoCode">-</span> | <span data-i18n="duration">Duration</span>: <span id="videoDuration">-</span></p>
+        <div id="previewWarning" class="warning hidden"><span data-i18n="preview_warning">⚠️ Preview video (short version)</span></div>
         <div class="quality-row">
-            <label>Quality:</label>
+            <label><span data-i18n="quality">Quality</span>:</label>
             <select id="qualitySelect" class="quality-select"></select>
         </div>
         <div class="button-group">
-            <button id="downloadBtn">⬇ Download Now</button>
-            <button id="addQueueBtn" class="btn-secondary">➕ Add to Queue</button>
+            <button id="downloadBtn">⬇ <span data-i18n="download_now">Download Now</span></button>
+            <button id="addQueueBtn" class="btn-secondary">➕ <span data-i18n="add_to_queue">Add to Queue</span></button>
         </div>
     </div>
 
@@ -48,21 +56,21 @@
     <div class="card">
         <div class="stats" id="stats"></div>
         <div class="button-group">
-            <button id="cleanBtn" class="btn-secondary">🧹 Clean Completed</button>
-            <button id="clearBtn" class="btn-danger">🗑 Clear Waiting</button>
+            <button id="cleanBtn" class="btn-secondary">🧹 <span data-i18n="clean_completed">Clean Completed</span></button>
+            <button id="clearBtn" class="btn-danger">🗑 <span data-i18n="clear_waiting">Clear Waiting</span></button>
         </div>
     </div>
 
     <!-- Task List -->
     <div class="card">
-        <h3>Download Queue</h3>
+        <h3><span data-i18n="download_queue">Download Queue</span></h3>
         <div id="taskList"></div>
     </div>
 
     <!-- File List -->
     <div class="card">
-        <h3>Downloads</h3>
-        <input type="text" id="fileSearch" placeholder="Search files..." class="search-input">
+        <h3><span data-i18n="downloads">Downloads</span></h3>
+        <input type="text" id="fileSearch" data-i18n-placeholder="search_files" placeholder="Search files..." class="search-input">
         <div id="fileList"></div>
     </div>
 </div>
@@ -70,36 +78,36 @@
 <!-- Settings Modal -->
 <div id="settingsModal" class="modal hidden">
     <div class="modal-content">
-        <h3>Settings</h3>
+        <h3><span data-i18n="settings_title">Settings</span></h3>
         <div class="setting-group">
-            <label>Download Directory:</label>
+            <label><span data-i18n="download_dir">Download Directory</span>:</label>
             <input type="text" id="settingsDownloadDir" class="setting-input">
         </div>
         <div class="setting-group">
             <label class="checkbox-label">
-                <input type="checkbox" id="settingsSequentialMode"> Sequential Mode (one at a time)
+                <input type="checkbox" id="settingsSequentialMode"> <span data-i18n="sequential_mode">Sequential Mode (one at a time)</span>
             </label>
         </div>
         <div class="setting-group">
-            <label>Delay between downloads (seconds):</label>
+            <label><span data-i18n="delay_seconds">Delay between downloads (seconds)</span>:</label>
             <input type="number" id="settingsDelay" class="setting-input">
         </div>
         <div class="setting-group">
-            <label>Default Quality:</label>
+            <label><span data-i18n="default_quality">Default Quality</span>:</label>
             <select id="settingsQuality" class="setting-input">
-                <option value="best">Best</option>
+                <option value="best"><span data-i18n="best">Best</span></option>
                 <option value="1080p">1080p</option>
                 <option value="720p">720p</option>
                 <option value="480p">480p</option>
             </select>
         </div>
         <div class="setting-group">
-            <label>Mirror Domains (one per line):</label>
+            <label><span data-i18n="mirror_domains">Mirror Domains (one per line)</span>:</label>
             <textarea id="settingsMirrors" rows="4" class="setting-textarea"></textarea>
         </div>
         <div class="button-group">
-            <button id="saveSettingsBtn">Save</button>
-            <button id="closeSettingsBtn" class="btn-secondary">Cancel</button>
+            <button id="saveSettingsBtn"><span data-i18n="save">Save</span></button>
+            <button id="closeSettingsBtn" class="btn-secondary"><span data-i18n="cancel">Cancel</span></button>
         </div>
     </div>
 </div>
