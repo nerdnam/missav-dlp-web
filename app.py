@@ -225,12 +225,19 @@ def get_log(task_id):
     return jsonify({"status": "error"}), 404
 
 if __name__ == '__main__':
+    import webbrowser
+    import threading
+
+    def open_browser():
+        webbrowser.open('http://localhost:5000')
+
     print(f"\n{'='*50}")
     print(f"MissAV Downloader Started")
     print(f"Download directory: {DOWNLOAD_DIR}")
     print(f"Logs directory: {ROOT_DIR / 'logs'}")
     print(f"Open: http://localhost:5000")
     print(f"{'='*50}\n")
-    app.run(host='0.0.0.0', port=5000, debug=False)
-
+    threading.Timer(1.5, open_browser).start()
+    #app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='127.0.0.1', port=5000, debug=False)
     
