@@ -1,5 +1,8 @@
 # app.py
 
+import sys
+import platform
+import shutil
 import os
 import json
 import subprocess
@@ -25,17 +28,48 @@ SPOOFDPI_PORT = 8080
 SPOOFDPI_PROXY = f"http://127.0.0.1:{SPOOFDPI_PORT}"
 
 def start_spoofdpi():
-    spoofdpi_bin = BASE_DIR / 'spoofdpi.exe'
-    if not spoofdpi_bin.exists():
-        spoofdpi_bin = 'spoofdpi'
-    try:
-        proc = subprocess.Popen([str(spoofdpi_bin)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        time.sleep(2)
-        if proc.poll() is None:
-            print(f"[System] SpoofDPI started (Port: {SPOOFDPI_PORT})", flush=True)
-    except FileNotFoundError:
-        print(f"[System] SpoofDPI not found", flush=True)
-
+    system = platform.system().lower()
+    
+    # Windows
+    if system == 'windows':
+        spoofdpi_bin = BASE_DIR / 'spoofdpi.exe'
+        if not spoofdpi_bin.exists():
+            spoofdpi_bin = 'spoofdpi'
+        try:
+            proc = subprocess.Popen([str(spoofdpi_bin)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            time.sleep(2)
+            if proc.poll() is None:
+                print(f"[System] SpoofDPI started on Windows (Port: {SPOOFDPI_PORT})", flush=True)
+        except FileNotFoundError:
+            print(f"[System] spoofdpi.exe not found in {BASE_DIR}", flush=True)
+    
+    # Linux / macOS
+    else:
+        import shutil
+        spoofdpi_cmd = shutil.which('spoof-dpi') or shutil.which('spoofdpi')
+        
+        if not spoofdpi_cmd:
+            print("\n" + "="*60)
+            print(f"⚠️  SpoofDPI not found on {system}!")
+            print("="*60)
+            if system == 'linux':
+                print("\nInstall: curl -fsSL https://raw.githubusercontent.com/xvzc/SpoofDPI/main/install.sh | bash")
+            elif system == 'darwin':
+                print("\nInstall: brew install spoofdpi")
+            print("\n🔗 https://github.com/xvzc/spoofdpi/releases")
+            print("="*60 + "\n")
+            return
+        
+        try:
+            proc = subprocess.Popen([spoofdpi_cmd, '-port', str(SPOOFDPI_PORT)], 
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+            time.sleep(2)
+            if proc.poll() is None:
+                print(f"[System] SpoofDPI started on {system} (Port: {SPOOFDPI_PORT})", flush=True)
+        except Exception as e:
+            print(f"[System] Error starting SpoofDPI: {e}", flush=True)
+            
 start_spoofdpi()
 
 app = Flask(__name__, static_folder='templates', static_url_path='/static')
