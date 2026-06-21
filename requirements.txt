@@ -1,4 +1,5 @@
 Flask>=3.1.0
 werkzeug>=3.0.6
-yt-dlp>=2024.3.10
+# impersonate(브라우저 TLS 위장) 네트워킹이 안정화된 버전 이상 필요
+yt-dlp>=2024.8.6
 curl_cffi>=0.7.0

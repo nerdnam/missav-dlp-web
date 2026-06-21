@@ -12,6 +12,9 @@ import yt_dlp
 from yt_dlp.extractor.common import InfoExtractor
 from curl_cffi import requests as cffi_requests
 
+# surrit.com CDN의 Cloudflare 봇 차단을 통과하기 위한 브라우저 TLS 지문 후보 (최신 우선, 미지원 시 자동 폴백)
+IMPERSONATE_TARGETS = ["chrome124", "chrome120", "chrome110"]
+
 # --- 설정 관리 ---
 DOWNLOAD_DIR = '/downloads'
 SETTINGS_FILE = os.path.join(DOWNLOAD_DIR, '.settings.json')
@@ -193,20 +196,32 @@ class MyCustomMissAV(InfoExtractor):
         print(f'🔗 마스터 m3u8: {master_url}', flush=True)
 
         # 4. 화질별 m3u8 URL 생성
+        # 브라우저 referrer-policy(strict-origin-when-cross-origin)와 동일하게 Referer는 오리진만 전송
+        netloc = urlparse(used_url).netloc
+        referer = f"https://{netloc}/"
+        origin = f"https://{netloc}"
         final_formats = []
-        try:
-            m_res = cffi_requests.get(
-                master_url,
-                impersonate="chrome110",
-                timeout=10,
-                headers={
-                    'Referer': used_url,
-                    'Origin': f"https://{urlparse(used_url).netloc}",
-                }
-            )
-            print(f'[m3u8] 응답코드: {m_res.status_code}', flush=True)
-            lines = m_res.text.split('\n')
-            for line in lines:
+
+        # 여러 브라우저 지문으로 마스터 m3u8 직접 fetch 시도 + 실제 m3u8(#EXTM3U)인지 검증
+        m_text = None
+        for tgt in IMPERSONATE_TARGETS:
+            try:
+                m_res = cffi_requests.get(
+                    master_url,
+                    impersonate=tgt,
+                    timeout=15,
+                    headers={'Referer': referer, 'Origin': origin, 'Accept': '*/*'},
+                )
+                print(f'[m3u8] {tgt} 응답코드: {m_res.status_code}', flush=True)
+                if m_res.status_code == 200 and '#EXTM3U' in m_res.text:
+                    m_text = m_res.text
+                    break
+                print(f'[m3u8] {tgt} 응답이 m3u8가 아님(차단 추정), 다음 지문 시도', flush=True)
+            except Exception as e:
+                print(f'⚠️ m3u8 fetch ({tgt}) 실패: {e}', flush=True)
+
+        if m_text:
+            for line in m_text.split('\n'):
                 line = line.strip()
                 if line and not line.startswith('#'):
                     quality_url = f"https://surrit.com/{video_uuid}/{line}"
@@ -214,7 +229,7 @@ class MyCustomMissAV(InfoExtractor):
                     height = None
                     try:
                         height = int(re.search(r'(\d+)', quality_label).group(1))
-                    except:
+                    except Exception:
                         pass
                     final_formats.append({
                         'url': quality_url,
@@ -223,17 +238,17 @@ class MyCustomMissAV(InfoExtractor):
                         'height': height,
                         'quality': height or 0,
                         'protocol': 'm3u8_native',
-                        'http_headers': {
-                            'Referer': used_url,
-                            'Origin': f"https://{urlparse(used_url).netloc}",
-                        }
+                        'http_headers': {'Referer': referer, 'Origin': origin},
                     })
                     print(f'[포맷] {quality_label} -> {quality_url}', flush=True)
-        except Exception as e:
-            print(f"⚠️ 화질별 목록 추출 실패: {e}", flush=True)
 
+        # 직접 fetch가 차단됐거나 결과가 없으면 yt-dlp 네트워킹(impersonate 적용)으로 폴백
         if not final_formats:
-            final_formats = self._extract_m3u8_formats(master_url, video_id, 'mp4', m3u8_id='hls')
+            print('⚠️ 직접 m3u8 추출 실패 → yt-dlp impersonate 폴백', flush=True)
+            final_formats = self._extract_m3u8_formats(
+                master_url, video_id, 'mp4', m3u8_id='hls',
+                headers={'Referer': referer, 'Origin': origin},
+            )
 
         final_formats.sort(key=lambda x: x.get('quality', 0) or x.get('height', 0) or 0, reverse=True)
 
@@ -265,14 +280,24 @@ def download_video(task_id, url):
         'quiet': True,
         'noprogress': True,
         'progress_hooks': [progress_hook],
+        # User-Agent는 지정하지 않음: impersonate가 TLS 지문과 일치하는 헤더를 자동 설정한다
+        # (UA를 수동 고정하면 TLS 지문과 불일치해 Cloudflare가 오히려 봇으로 탐지함).
+        # Referer/Origin은 추출기에서 포맷별 http_headers로 다시 덮어쓴다.
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
             'Referer': 'https://missav.ws/',
             'Origin': 'https://missav.ws',
         },
         'hls_prefer_native': True,
         'concurrent_fragment_downloads': 5,
     }
+
+    # surrit.com CDN의 Cloudflare TLS 지문 차단을 우회하기 위해 yt-dlp의 모든 요청을
+    # 브라우저로 위장(impersonate). 세그먼트(.ts) 다운로드까지 curl_cffi 백엔드를 사용하게 된다.
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+        ydl_opts['impersonate'] = ImpersonateTarget.from_str('chrome')
+    except Exception as e:
+        print(f'[System] yt-dlp impersonate 미지원 — yt-dlp 업데이트 필요: {e}', flush=True)
 
     with yt_dlp.YoutubeDL(ydl_opts, auto_init=False) as ydl:
         ydl.add_info_extractor(MyCustomMissAV())
