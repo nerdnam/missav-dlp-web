@@ -689,6 +689,10 @@ missav01.com</textarea>
                     actions =
                         '<a class="btn btn-primary" href="/api/files/' + encodeURIComponent(t.filename) + '/download" style="text-decoration:none">\u2193 받기</a>' +
                         '<button class="btn btn-ghost" onclick="deleteTask(\'' + id + '\')">\u2715</button>';
+                } else if (t.status.includes('\uc5d0\ub7ec') || t.status.includes('\ucde8\uc18c')) {
+                    actions =
+                        '<button class="btn btn-primary" onclick="retryTask(\'' + id + '\')">\u21bb \uc7ac\uc2dc\uc791</button>' +
+                        '<button class="btn btn-ghost" onclick="deleteTask(\'' + id + '\')">\u2715</button>';
                 } else {
                     actions = '<button class="btn btn-ghost" onclick="deleteTask(\'' + id + '\')">\u2715</button>';
                 }
@@ -714,6 +718,10 @@ missav01.com</textarea>
 
     function deleteTask(id) {
         fetch('/api/tasks/' + id, { method: 'DELETE' }).then(() => fetchTasks());
+    }
+
+    function retryTask(id) {
+        fetch('/api/tasks/' + id + '/retry', { method: 'POST' }).then(() => fetchTasks());
     }
 
     setInterval(fetchTasks, 1500);

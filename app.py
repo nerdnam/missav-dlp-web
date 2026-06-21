@@ -439,6 +439,20 @@ def delete_task(task_id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"}), 404
 
+@app.route('/api/tasks/<task_id>/retry', methods=['POST'])
+def retry_task(task_id):
+    """실패/취소된 작업을 같은 URL로 다시 큐에 넣어 재시도한다."""
+    if task_id not in tasks:
+        return jsonify({"status": "error", "message": "작업 없음"}), 404
+    cur = tasks[task_id].get('status', '')
+    if cur in ('다운로드 중', '대기 중'):
+        return jsonify({"status": "error", "message": "이미 진행 중인 작업"}), 400
+    tasks[task_id]['status'] = '대기 중'
+    tasks[task_id]['progress'] = '0%'
+    download_queue.put(task_id)
+    print(f"[Retry] 재시도 큐 추가: {tasks[task_id].get('url')}", flush=True)
+    return jsonify({"status": "success"})
+
 @app.route('/api/files', methods=['GET'])
 def list_files():
     files = []
