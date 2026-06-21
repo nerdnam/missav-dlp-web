@@ -9,9 +9,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. GitHub 저장소 체크아웃
+      # 1. GitHub 저장소 체크아웃 (전체 히스토리·태그 필요)
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # paulhatch/semantic-version 가 태그 기반으로 버전을 계산하려면 얕은 클론이 아니어야 함
+          fetch-depth: 0
 
       # 2. 버전 번호 자동 계산 (0.0.x 방식)
       - name: Get next version
