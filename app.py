@@ -16,13 +16,46 @@ from curl_cffi import requests as cffi_requests
 DOWNLOAD_DIR = '/downloads'
 SETTINGS_FILE = os.path.join(DOWNLOAD_DIR, '.settings.json')
 
+# 설정 스키마 버전. 미러 목록 등 기본값이 바뀔 때 올려서 기존 설정 파일을 자동 마이그레이션한다.
+SETTINGS_VERSION = 3
+
 DEFAULT_SETTINGS = {
     'max_concurrent': 4,
     'filename_template': '[%(id)s] %(title).60s.%(ext)s',
     'spoofdpi_enabled': True,
     'video_quality': 'best',
-    'mirrors': ['missav.ai', 'missav.net', 'missav123.com', 'missav.com', 'missav.ws'],
+    # 유저스크립트 @match 기준 현재 활성 도메인 (2026.3 기준). 죽은 미러(missav.net/com) 제거.
+    'mirrors': ['missav.ai', 'missav.ws', 'missav.live', 'missav.fans', 'missav.media', 'missav123.com', 'missav01.com'],
+    'settings_version': SETTINGS_VERSION,
 }
+
+# 버전 업그레이드 시 자동으로 제거할, 더 이상 동작하지 않는 옛 미러 도메인
+DEPRECATED_MIRRORS = {'missav.net', 'missav.com'}
+
+def migrate_settings(saved):
+    """저장된 설정에 새 기본 키를 채우고, 버전 업그레이드 시 미러 목록을 갱신한다.
+    사용자가 추가한 커스텀 미러는 보존하고, 죽은 기본 미러(DEPRECATED_MIRRORS)만 교체한다.
+    반환: (마이그레이션된 설정 dict, 변경 여부 bool)
+    """
+    merged = {**DEFAULT_SETTINGS, **saved}
+    changed = False
+
+    # 1. 새로 추가된 기본 키가 저장본에 없으면 채워 넣고 재저장 표시
+    if any(k not in saved for k in DEFAULT_SETTINGS):
+        changed = True
+
+    # 2. 버전 업그레이드 시 미러 목록 마이그레이션 (죽은 미러 제거 + 신규 공식 미러 추가)
+    if saved.get('settings_version', 1) < SETTINGS_VERSION:
+        mirrors = [m for m in merged.get('mirrors', []) if m not in DEPRECATED_MIRRORS]
+        for m in DEFAULT_SETTINGS['mirrors']:
+            if m not in mirrors:
+                mirrors.append(m)
+        merged['mirrors'] = mirrors
+        merged['settings_version'] = SETTINGS_VERSION
+        changed = True
+
+    return merged, changed
+
 
 def load_settings():
     try:
@@ -33,8 +66,11 @@ def load_settings():
             return DEFAULT_SETTINGS.copy()
         with open(SETTINGS_FILE, 'r') as f:
             saved = json.load(f)
-            merged = {**DEFAULT_SETTINGS, **saved}
-            return merged
+        merged, changed = migrate_settings(saved)
+        if changed:
+            save_settings(merged)
+            print(f"[System] 설정을 v{SETTINGS_VERSION}로 마이그레이션했습니다. 미러: {merged.get('mirrors')}", flush=True)
+        return merged
     except (FileNotFoundError, json.JSONDecodeError):
         save_settings(DEFAULT_SETTINGS.copy())
         return DEFAULT_SETTINGS.copy()
@@ -78,7 +114,9 @@ class DownloadCancelled(Exception):
 # --- 커스텀 MissAV 추출기 ---
 class MyCustomMissAV(InfoExtractor):
     IE_NAME = 'custom_missav'
-    _VALID_URL = r'https?://(?:[^/]+\.)?missav\.[^/]+/(?:[^/]+/)?(?P<id>[^/?#]+)'
+    # missav.ws / missav.live 외에 missav123.com 처럼 숫자가 붙은 도메인도 매칭 (\d*)
+    # 로케일 접두사(/en/, /ja/, /dm22/en/ 등)는 모두 건너뛰고 마지막 세그먼트를 영상 코드로 사용
+    _VALID_URL = r'https?://(?:[^/]+\.)?missav\d*\.[^/]+/(?:[^/?#]+/)*(?P<id>[^/?#]+)'
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
