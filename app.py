@@ -12,8 +12,10 @@ import yt_dlp
 from yt_dlp.extractor.common import InfoExtractor
 from curl_cffi import requests as cffi_requests
 
-# surrit.com CDN의 Cloudflare 봇 차단을 통과하기 위한 브라우저 TLS 지문 후보 (최신 우선, 미지원 시 자동 폴백)
-IMPERSONATE_TARGETS = ["chrome124", "chrome120", "chrome110"]
+# surrit.com CDN의 Cloudflare 봇 차단 통과용 브라우저 TLS 지문 후보.
+# 실사용 브라우저가 Firefox이고 Firefox로는 통과되므로 Firefox 지문을 우선 시도하고,
+# 미지원/실패 시 Chrome 지문으로 폴백한다 (각 항목은 미지원 시 자동으로 건너뜀).
+IMPERSONATE_TARGETS = ["firefox135", "firefox133", "chrome131", "chrome124", "chrome120"]
 
 # --- 설정 관리 ---
 DOWNLOAD_DIR = '/downloads'
@@ -260,6 +262,34 @@ class MyCustomMissAV(InfoExtractor):
         }
 
 
+def select_impersonate_target(ydl):
+    """yt-dlp 다운로드용 impersonate 타깃 선택.
+    surrit.com이 Firefox는 통과시키고 Chrome 지문은 차단하는 정황이 있어 Firefox를 우선 선택하고,
+    백엔드(curl_cffi)에 Firefox 타깃이 없으면 Chrome으로 폴백한다. 사용 불가 시 None 반환."""
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+    except Exception:
+        return None
+    # 백엔드가 실제로 지원하는 타깃 목록 조회 (버전에 따라 (target, handler) 튜플 또는 target)
+    available = []
+    try:
+        for item in ydl._get_available_impersonate_targets():
+            available.append(item[0] if isinstance(item, (list, tuple)) else item)
+    except Exception:
+        available = []
+    for client in ('firefox', 'chrome'):
+        want = ImpersonateTarget(client=client)
+        if not available:
+            return want  # 조회 실패 시 일반 타깃으로 시도 (요청 시점에 매칭)
+        for a in available:
+            try:
+                if a in want:  # 사용 가능한 구체 타깃 a가 want(일반) 사양을 만족
+                    return a
+            except Exception:
+                continue
+    return None
+
+
 # --- 다운로드 함수 ---
 def download_video(task_id, url):
     def progress_hook(d):
@@ -291,17 +321,17 @@ def download_video(task_id, url):
         'concurrent_fragment_downloads': 5,
     }
 
-    # surrit.com CDN의 Cloudflare TLS 지문 차단을 우회하기 위해 yt-dlp의 모든 요청을
-    # 브라우저로 위장(impersonate). 세그먼트(.ts) 다운로드까지 curl_cffi 백엔드를 사용하게 된다.
-    try:
-        from yt_dlp.networking.impersonate import ImpersonateTarget
-        ydl_opts['impersonate'] = ImpersonateTarget.from_str('chrome')
-    except Exception as e:
-        print(f'[System] yt-dlp impersonate 미지원 — yt-dlp 업데이트 필요: {e}', flush=True)
-
     with yt_dlp.YoutubeDL(ydl_opts, auto_init=False) as ydl:
         ydl.add_info_extractor(MyCustomMissAV())
         ydl.add_default_info_extractors()
+        # surrit.com CDN의 Cloudflare 차단 우회: yt-dlp의 모든 요청(.ts 세그먼트 포함)을 브라우저로 위장.
+        # 실사용 Firefox로는 통과되므로 Firefox 지문을 우선 선택하고, 없으면 Chrome으로 폴백.
+        target = select_impersonate_target(ydl)
+        if target is not None:
+            ydl.params['impersonate'] = target
+            print(f'[System] yt-dlp impersonate 타깃: {target}', flush=True)
+        else:
+            print('[System] yt-dlp impersonate 사용 불가 — yt-dlp/curl_cffi 업데이트 필요', flush=True)
         try:
             print(f"[Download] 시작: {url}", flush=True)
             ydl.download([url])
