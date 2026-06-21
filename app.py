@@ -13,9 +13,44 @@ from yt_dlp.extractor.common import InfoExtractor
 from curl_cffi import requests as cffi_requests
 
 # surrit.com CDN의 Cloudflare 봇 차단 통과용 브라우저 TLS 지문 후보.
-# 실사용 브라우저가 Firefox이고 Firefox로는 통과되므로 Firefox 지문을 우선 시도하고,
-# 미지원/실패 시 Chrome 지문으로 폴백한다 (각 항목은 미지원 시 자동으로 건너뜀).
-IMPERSONATE_TARGETS = ["firefox135", "firefox133", "chrome131", "chrome124", "chrome120"]
+# cf_clearance 쿠키(FlareSolverr)는 Chromium에서 발급되므로 Chrome UA와 맞춰 Chrome 지문을 우선 시도.
+IMPERSONATE_TARGETS = ["chrome131", "chrome124", "chrome120", "firefox135"]
+
+# --- FlareSolverr (Cloudflare 봇 차단 우회: 헤드리스 브라우저로 cf_clearance 쿠키 획득) ---
+# 다운로더와 같은 Gluetun 망에 FlareSolverr 컨테이너를 띄우면 서버 자신의 IP로 쿠키가 발급된다.
+FLARESOLVERR_URL = os.environ.get('FLARESOLVERR_URL', 'http://localhost:8191/v1')
+_cf_cache = {'cookie': None, 'ua': None, 'ts': 0.0}
+_CF_CACHE_TTL = 900  # cf_clearance 쿠키 재사용 시간(초)
+
+def get_cf_clearance(probe_url, force=False):
+    """FlareSolverr로 surrit.com의 cf_clearance 쿠키와 User-Agent를 얻는다(캐시 사용).
+    반환: (cookie_header, user_agent) 또는 (None, None)."""
+    now = time.time()
+    if not force and _cf_cache['cookie'] and now - _cf_cache['ts'] < _CF_CACHE_TTL:
+        return _cf_cache['cookie'], _cf_cache['ua']
+    try:
+        resp = cffi_requests.post(
+            FLARESOLVERR_URL,
+            json={'cmd': 'request.get', 'url': probe_url, 'maxTimeout': 60000},
+            timeout=90,
+        )
+        data = resp.json()
+        if data.get('status') != 'ok':
+            print(f"[FlareSolverr] 실패: {data.get('message')}", flush=True)
+            return None, None
+        sol = data.get('solution', {})
+        ua = sol.get('userAgent')
+        cookies = sol.get('cookies', [])
+        cookie_header = '; '.join(f"{c['name']}={c['value']}" for c in cookies if c.get('name'))
+        if cookie_header:
+            _cf_cache.update(cookie=cookie_header, ua=ua, ts=now)
+            print(f"[FlareSolverr] cf_clearance 획득 (쿠키 {len(cookies)}개, UA={ua})", flush=True)
+            return cookie_header, ua
+        print("[FlareSolverr] 쿠키가 비어있음", flush=True)
+        return None, None
+    except Exception as e:
+        print(f"[FlareSolverr] 호출 실패(컨테이너 미기동/주소 확인): {e}", flush=True)
+        return None, None
 
 # --- 설정 관리 ---
 DOWNLOAD_DIR = '/downloads'
@@ -203,24 +238,42 @@ class MyCustomMissAV(InfoExtractor):
         referer = f"https://{netloc}/"
         origin = f"https://{netloc}"
         final_formats = []
+        cf_cookie, cf_ua = None, None  # FlareSolverr로 받은 cf_clearance 쿠키 / User-Agent
 
-        # 여러 브라우저 지문으로 마스터 m3u8 직접 fetch 시도 + 실제 m3u8(#EXTM3U)인지 검증
-        m_text = None
-        for tgt in IMPERSONATE_TARGETS:
-            try:
-                m_res = cffi_requests.get(
-                    master_url,
-                    impersonate=tgt,
-                    timeout=15,
-                    headers={'Referer': referer, 'Origin': origin, 'Accept': '*/*'},
-                )
-                print(f'[m3u8] {tgt} 응답코드: {m_res.status_code}', flush=True)
-                if m_res.status_code == 200 and '#EXTM3U' in m_res.text:
-                    m_text = m_res.text
-                    break
-                print(f'[m3u8] {tgt} 응답이 m3u8가 아님(차단 추정), 다음 지문 시도', flush=True)
-            except Exception as e:
-                print(f'⚠️ m3u8 fetch ({tgt}) 실패: {e}', flush=True)
+        def fetch_m3u8(cookie=None, ua=None):
+            """여러 TLS 지문으로 마스터 m3u8을 받아 실제 m3u8(#EXTM3U)인지 검증. 본문 반환 or None."""
+            for tgt in IMPERSONATE_TARGETS:
+                try:
+                    h = {'Referer': referer, 'Origin': origin, 'Accept': '*/*'}
+                    if cookie:
+                        h['Cookie'] = cookie
+                    if ua:
+                        h['User-Agent'] = ua
+                    r = cffi_requests.get(master_url, impersonate=tgt, timeout=15, headers=h)
+                    tag = 'm3u8+cf' if cookie else 'm3u8'
+                    print(f'[{tag}] {tgt} 응답코드: {r.status_code}', flush=True)
+                    if r.status_code == 200 and '#EXTM3U' in r.text:
+                        return r.text
+                except Exception as e:
+                    print(f'⚠️ m3u8 fetch ({tgt}) 실패: {e}', flush=True)
+            return None
+
+        # 1차: 쿠키 없이 직접 시도
+        m_text = fetch_m3u8()
+
+        # 2차: 차단되면 FlareSolverr로 cf_clearance 쿠키를 받아 재시도 (서버 자신의 IP로 발급)
+        if not m_text:
+            print('⚠️ 직접 m3u8 차단 → FlareSolverr로 cf_clearance 시도', flush=True)
+            cf_cookie, cf_ua = get_cf_clearance(master_url)
+            if cf_cookie:
+                m_text = fetch_m3u8(cookie=cf_cookie, ua=cf_ua)
+
+        # 세그먼트 다운로드까지 쿠키·UA가 전달되도록 포맷 헤더 구성
+        fmt_headers = {'Referer': referer, 'Origin': origin}
+        if cf_cookie:
+            fmt_headers['Cookie'] = cf_cookie
+        if cf_ua:
+            fmt_headers['User-Agent'] = cf_ua
 
         if m_text:
             for line in m_text.split('\n'):
@@ -240,16 +293,15 @@ class MyCustomMissAV(InfoExtractor):
                         'height': height,
                         'quality': height or 0,
                         'protocol': 'm3u8_native',
-                        'http_headers': {'Referer': referer, 'Origin': origin},
+                        'http_headers': dict(fmt_headers),
                     })
                     print(f'[포맷] {quality_label} -> {quality_url}', flush=True)
 
-        # 직접 fetch가 차단됐거나 결과가 없으면 yt-dlp 네트워킹(impersonate 적용)으로 폴백
+        # 그래도 결과가 없으면 yt-dlp 네트워킹(impersonate + 쿠키)으로 폴백
         if not final_formats:
-            print('⚠️ 직접 m3u8 추출 실패 → yt-dlp impersonate 폴백', flush=True)
+            print('⚠️ 직접 m3u8 추출 실패 → yt-dlp 폴백', flush=True)
             final_formats = self._extract_m3u8_formats(
-                master_url, video_id, 'mp4', m3u8_id='hls',
-                headers={'Referer': referer, 'Origin': origin},
+                master_url, video_id, 'mp4', m3u8_id='hls', headers=fmt_headers,
             )
 
         final_formats.sort(key=lambda x: x.get('quality', 0) or x.get('height', 0) or 0, reverse=True)
@@ -277,7 +329,7 @@ def select_impersonate_target(ydl):
             available.append(item[0] if isinstance(item, (list, tuple)) else item)
     except Exception:
         available = []
-    for client in ('firefox', 'chrome'):
+    for client in ('chrome', 'firefox'):
         want = ImpersonateTarget(client=client)
         if not available:
             return want  # 조회 실패 시 일반 타깃으로 시도 (요청 시점에 매칭)
