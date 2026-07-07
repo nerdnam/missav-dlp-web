@@ -15,7 +15,7 @@ TrueNAS / Docker 환경용 **MissAV 웹 기반 다운로더**. 브라우저에�
 ```yaml
 services:
   missav-dlp-web:
-    image: ghcr.io/nerdnam/missav-dlp-web:0.0.14
+    image: ghcr.io/nerdnam/missav-dlp-web:0.0.15
     restart: unless-stopped
     pull_policy: always
     ports:
