@@ -16,6 +16,16 @@ from curl_cffi import requests as cffi_requests
 # 실사용상 Firefox 지문이 가장 잘 통과되어 Firefox 전용으로 시도한다.
 IMPERSONATE_TARGETS = ["firefox135", "firefox133"]
 
+# surrit.com은 m3u8/세그먼트에 대한 "직접 접근"(Sec-Fetch-Site: none/navigate)은 WAF로 차단하고,
+# 미러 페이지의 영상 플레이어가 보내는 "크로스사이트 서브리소스 요청"은 허용한다.
+# 그래서 요청을 플레이어의 fetch처럼 보이게 하는 헤더를 함께 보낸다.
+CROSS_SITE_HEADERS = {
+    'Accept': '*/*',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'cross-site',
+}
+
 # --- FlareSolverr (Cloudflare 봇 차단 우회: 헤드리스 브라우저로 cf_clearance 쿠키 획득) ---
 # 다운로더와 같은 Gluetun 망에 FlareSolverr 컨테이너를 띄우면 서버 자신의 IP로 쿠키가 발급된다.
 FLARESOLVERR_URL = os.environ.get('FLARESOLVERR_URL', 'http://localhost:8191/v1')
@@ -248,7 +258,7 @@ class MyCustomMissAV(InfoExtractor):
             """여러 TLS 지문으로 마스터 m3u8을 받아 실제 m3u8(#EXTM3U)인지 검증. 본문 반환 or None."""
             for tgt in IMPERSONATE_TARGETS:
                 try:
-                    h = {'Referer': referer, 'Origin': origin, 'Accept': '*/*'}
+                    h = {'Referer': referer, 'Origin': origin, **CROSS_SITE_HEADERS}
                     if cookie:
                         h['Cookie'] = cookie
                     if ua:
@@ -282,8 +292,8 @@ class MyCustomMissAV(InfoExtractor):
             print('⚠️ 직접 m3u8 차단 → cf_clearance 쿠키로 재시도', flush=True)
             m_text = fetch_m3u8(cookie=cf_cookie, ua=cf_ua)
 
-        # 세그먼트 다운로드까지 쿠키·UA가 전달되도록 포맷 헤더 구성
-        fmt_headers = {'Referer': referer, 'Origin': origin}
+        # 세그먼트 다운로드도 플레이어처럼(크로스사이트) 보이도록 헤더 구성 + 쿠키·UA 전달
+        fmt_headers = {'Referer': referer, 'Origin': origin, **CROSS_SITE_HEADERS}
         if cf_cookie:
             fmt_headers['Cookie'] = cf_cookie
         if cf_ua:
