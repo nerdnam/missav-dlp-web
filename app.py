@@ -13,8 +13,8 @@ from yt_dlp.extractor.common import InfoExtractor
 from curl_cffi import requests as cffi_requests
 
 # surrit.com CDN의 Cloudflare 봇 차단 통과용 브라우저 TLS 지문 후보.
-# cf_clearance 쿠키(FlareSolverr)는 Chromium에서 발급되므로 Chrome UA와 맞춰 Chrome 지문을 우선 시도.
-IMPERSONATE_TARGETS = ["chrome131", "chrome124", "chrome120", "firefox135"]
+# 실사용상 Firefox 지문이 가장 잘 통과되어 Firefox 전용으로 시도한다.
+IMPERSONATE_TARGETS = ["firefox135", "firefox133"]
 
 # --- FlareSolverr (Cloudflare 봇 차단 우회: 헤드리스 브라우저로 cf_clearance 쿠키 획득) ---
 # 다운로더와 같은 Gluetun 망에 FlareSolverr 컨테이너를 띄우면 서버 자신의 IP로 쿠키가 발급된다.
@@ -331,7 +331,7 @@ def select_impersonate_target(ydl):
             available.append(item[0] if isinstance(item, (list, tuple)) else item)
     except Exception:
         available = []
-    for client in ('chrome', 'firefox'):
+    for client in ('firefox', 'chrome'):
         want = ImpersonateTarget(client=client)
         if not available:
             return want  # 조회 실패 시 일반 타깃으로 시도 (요청 시점에 매칭)
