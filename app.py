@@ -275,17 +275,14 @@ class MyCustomMissAV(InfoExtractor):
         # 1차: 쿠키 없이 마스터 m3u8 직접 시도
         m_text = fetch_m3u8()
 
-        # 세그먼트(.ts)에는 마스터가 통과해도 cf_clearance 쿠키가 필요한 경우가 많다.
-        # 설정에 수동 cf_clearance가 있으면 그걸 우선 사용(브라우저에서 복사 — 서버가 같은 IP면 유효),
-        # 없으면 FlareSolverr로 자동 발급 시도.
+        # 세그먼트는 쿠키 없이 헤더(Sec-Fetch cross-site)만으로 통과한다(브라우저 실측 확인).
+        # 설정에 수동 cf_clearance가 있으면 선택적으로 함께 보낸다.
         manual_cookie = (settings.get('cf_cookie') or '').strip()
         manual_ua = (settings.get('cf_user_agent') or '').strip()
         if manual_cookie:
             cf_cookie = manual_cookie if '=' in manual_cookie else f'cf_clearance={manual_cookie}'
             cf_ua = manual_ua or None
             print('[cf] 수동 cf_clearance 쿠키 사용', flush=True)
-        else:
-            cf_cookie, cf_ua = get_cf_clearance(master_url)
 
         # 마스터도 막혔으면 확보한 쿠키로 재시도
         if not m_text and cf_cookie:
@@ -366,60 +363,134 @@ def select_impersonate_target(ydl):
     return None
 
 
+# --- surrit.com 세그먼트 직접 다운로드 ---
+# yt-dlp는 세그먼트 요청에 Sec-Fetch 헤더를 싣지 않아 403이 난다. 마스터가 통과하는 방식
+# (curl_cffi + 크로스사이트 헤더) 그대로 변형 m3u8과 세그먼트를 직접 받아 합친다 (쿠키 불필요).
+from concurrent.futures import ThreadPoolExecutor
+
+
+def _fetch_segment(seg_url, headers):
+    last = None
+    for _ in range(2):
+        for tgt in IMPERSONATE_TARGETS:
+            try:
+                r = cffi_requests.get(seg_url, impersonate=tgt, headers=headers, timeout=30)
+                if r.status_code == 200:
+                    return r.content
+                last = f'HTTP {r.status_code}'
+            except Exception as e:
+                last = str(e)
+    raise ValueError(f'세그먼트 실패({last}): {seg_url}')
+
+
+def _download_hls_direct(task_id, variant_url, headers, ts_path):
+    """변형 m3u8을 받아 세그먼트를 curl_cffi로 직접 내려받아 ts_path에 순서대로 이어붙인다."""
+    r = None
+    for tgt in IMPERSONATE_TARGETS:
+        r = cffi_requests.get(variant_url, impersonate=tgt, headers=headers, timeout=20)
+        if r.status_code == 200 and '#EXT' in r.text:
+            break
+    if not r or r.status_code != 200 or '#EXT' not in r.text:
+        raise ValueError(f'변형 m3u8 응답 이상: {r.status_code if r else "?"}')
+    base = variant_url.rsplit('/', 1)[0] + '/'
+    seg_urls = [
+        (s if s.startswith('http') else base + s)
+        for s in (ln.strip() for ln in r.text.splitlines())
+        if s and not s.startswith('#')
+    ]
+    total = len(seg_urls)
+    if total == 0:
+        raise ValueError('세그먼트가 없습니다')
+    print(f'[직접 다운로드] 세그먼트 {total}개', flush=True)
+    with open(ts_path, 'wb') as f, ThreadPoolExecutor(max_workers=8) as ex:
+        BATCH = 16
+        for start in range(0, total, BATCH):
+            if task_id not in tasks:
+                raise DownloadCancelled()
+            batch = seg_urls[start:start + BATCH]
+            for data in ex.map(lambda u: _fetch_segment(u, headers), batch):
+                f.write(data)
+            tasks[task_id]['progress'] = f'{int(min(start + BATCH, total) * 100 / total)}%'
+
+
+def _pick_format(formats, quality):
+    fmts = sorted([f for f in formats if f.get('url')], key=lambda f: f.get('height') or 0)
+    if not fmts:
+        return None
+    if not quality or quality == 'best':
+        return fmts[-1]
+    try:
+        target = int(quality)
+        under = [f for f in fmts if (f.get('height') or 0) <= target]
+        return under[-1] if under else fmts[0]
+    except Exception:
+        return fmts[-1]
+
+
+def _safe_filename(info, ext='mp4'):
+    vid = info.get('id') or 'video'
+    title = re.sub(r'[\\/:*?"<>|\n\r\t]', '', (info.get('title') or vid)).strip()[:60]
+    return f'[{vid}] {title}.{ext}'
+
+
 # --- 다운로드 함수 ---
 def download_video(task_id, url):
-    def progress_hook(d):
-        if task_id not in tasks:
-            raise DownloadCancelled("취소됨")
-        if d['status'] == 'downloading':
-            p = d.get('_percent_str', '0%')
-            tasks[task_id]['progress'] = re.sub(r'\x1b[^m]*m', '', p).strip()
-        elif d['status'] == 'finished':
-            tasks[task_id]['progress'] = '100%'
-
-    tmpl = settings.get('filename_template', DEFAULT_SETTINGS['filename_template'])
-    ydl_opts = {
-        'outtmpl': f'{DOWNLOAD_DIR}/{tmpl}',
-        'format': 'bestvideo+bestaudio/best',
-        'merge_output_format': 'mp4',
-        'proxy': None,  # surrit.com CDN은 프록시 없이 직접 접근
-        'quiet': True,
-        'noprogress': True,
-        'progress_hooks': [progress_hook],
-        # User-Agent는 지정하지 않음: impersonate가 TLS 지문과 일치하는 헤더를 자동 설정한다
-        # (UA를 수동 고정하면 TLS 지문과 불일치해 Cloudflare가 오히려 봇으로 탐지함).
-        # Referer/Origin은 추출기에서 포맷별 http_headers로 다시 덮어쓴다.
-        'http_headers': {
-            'Referer': 'https://missav.ws/',
-            'Origin': 'https://missav.ws',
-        },
-        'hls_prefer_native': True,
-        'concurrent_fragment_downloads': 5,
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts, auto_init=False) as ydl:
-        ydl.add_info_extractor(MyCustomMissAV())
-        ydl.add_default_info_extractors()
-        # surrit.com CDN의 Cloudflare 차단 우회: yt-dlp의 모든 요청(.ts 세그먼트 포함)을 브라우저로 위장.
-        # 실사용 Firefox로는 통과되므로 Firefox 지문을 우선 선택하고, 없으면 Chrome으로 폴백.
-        target = select_impersonate_target(ydl)
-        if target is not None:
-            ydl.params['impersonate'] = target
-            print(f'[System] yt-dlp impersonate 타깃: {target}', flush=True)
-        else:
-            print('[System] yt-dlp impersonate 사용 불가 — yt-dlp/curl_cffi 업데이트 필요', flush=True)
-        try:
+    try:
+        # 1. 추출만 (다운로드는 직접 처리) — MyCustomMissAV가 변형 m3u8 URL + 헤더를 준다
+        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'proxy': None},
+                              auto_init=False) as ydl:
+            ydl.add_info_extractor(MyCustomMissAV())
             print(f"[Download] 시작: {url}", flush=True)
-            ydl.download([url])
-            if task_id in tasks:
-                tasks[task_id]['status'] = '완료'
-        except DownloadCancelled:
-            if task_id in tasks:
-                tasks[task_id]['status'] = '취소됨'
+            info = ydl.extract_info(url, download=False)
+
+        fmt = _pick_format(info.get('formats', []), settings.get('video_quality', 'best'))
+        if not fmt:
+            raise ValueError('사용 가능한 화질이 없습니다')
+        variant_url = fmt['url']
+        headers = dict(fmt.get('http_headers') or {})
+        for k, v in CROSS_SITE_HEADERS.items():
+            headers.setdefault(k, v)
+        print(f"[선택] {fmt.get('height')}p -> {variant_url}", flush=True)
+
+        out_name = _safe_filename(info)
+        out_path = os.path.join(DOWNLOAD_DIR, out_name)
+        ts_path = out_path + '.part.ts'
+
+        # 2. 세그먼트 직접 다운로드
+        _download_hls_direct(task_id, variant_url, headers, ts_path)
+        if task_id not in tasks:
+            if os.path.exists(ts_path):
+                os.remove(ts_path)
+            return
+
+        # 3. mp4로 리먹스 (실패하면 원본 ts 유지)
+        tasks[task_id]['progress'] = '99%'
+        try:
+            subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', ts_path, '-c', 'copy', out_path],
+                           check=True)
+            os.remove(ts_path)
         except Exception as e:
-            print(f"[Error] {url}: {e}", flush=True)
-            if task_id in tasks:
-                tasks[task_id]['status'] = f'에러: {str(e)[:100]}'
+            print(f'[ffmpeg] 리먹스 실패 → 원본 ts 저장: {e}', flush=True)
+            out_name = _safe_filename(info, ext='ts')
+            out_path = os.path.join(DOWNLOAD_DIR, out_name)
+            os.replace(ts_path, out_path)
+
+        if task_id in tasks:
+            tasks[task_id]['status'] = '완료'
+            tasks[task_id]['progress'] = '100%'
+            tasks[task_id]['filename'] = out_name
+            try:
+                tasks[task_id]['filesize'] = os.path.getsize(out_path)
+            except OSError:
+                pass
+        print(f"[완료] {out_name}", flush=True)
+    except DownloadCancelled:
+        if task_id in tasks:
+            tasks[task_id]['status'] = '취소됨'
+    except Exception as e:
+        print(f"[Error] {url}: {e}", flush=True)
+        if task_id in tasks:
+            tasks[task_id]['status'] = f'에러: {str(e)[:100]}'
 
 
 # --- 워커 ---
