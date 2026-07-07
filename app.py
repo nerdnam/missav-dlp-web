@@ -66,6 +66,10 @@ DEFAULT_SETTINGS = {
     'video_quality': 'best',
     # 유저스크립트 @match 기준 현재 활성 도메인 (2026.3 기준). 죽은 미러(missav.net/com) 제거.
     'mirrors': ['missav.ai', 'missav.ws', 'missav.live', 'missav.fans', 'missav.media', 'missav123.com', 'missav01.com'],
+    # 브라우저에서 복사한 surrit.com cf_clearance 쿠키/UA. 서버가 브라우저와 같은 출구 IP일 때 유효.
+    # (설정 시 FlareSolverr보다 우선 사용. 쿠키는 수시간 뒤 만료되므로 갱신 필요)
+    'cf_cookie': '',
+    'cf_user_agent': '',
     'settings_version': SETTINGS_VERSION,
 }
 
@@ -261,9 +265,17 @@ class MyCustomMissAV(InfoExtractor):
         # 1차: 쿠키 없이 마스터 m3u8 직접 시도
         m_text = fetch_m3u8()
 
-        # 세그먼트(.ts) 다운로드에는 마스터가 통과하더라도 cf_clearance 쿠키가 필요한 경우가 많다.
-        # 그래서 마스터 통과 여부와 무관하게 쿠키를 항상(15분 캐시) 확보해 포맷 헤더에 실어준다.
-        cf_cookie, cf_ua = get_cf_clearance(master_url)
+        # 세그먼트(.ts)에는 마스터가 통과해도 cf_clearance 쿠키가 필요한 경우가 많다.
+        # 설정에 수동 cf_clearance가 있으면 그걸 우선 사용(브라우저에서 복사 — 서버가 같은 IP면 유효),
+        # 없으면 FlareSolverr로 자동 발급 시도.
+        manual_cookie = (settings.get('cf_cookie') or '').strip()
+        manual_ua = (settings.get('cf_user_agent') or '').strip()
+        if manual_cookie:
+            cf_cookie = manual_cookie if '=' in manual_cookie else f'cf_clearance={manual_cookie}'
+            cf_ua = manual_ua or None
+            print('[cf] 수동 cf_clearance 쿠키 사용', flush=True)
+        else:
+            cf_cookie, cf_ua = get_cf_clearance(master_url)
 
         # 마스터도 막혔으면 확보한 쿠키로 재시도
         if not m_text and cf_cookie:

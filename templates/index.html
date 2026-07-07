@@ -568,6 +568,18 @@ missav123.com
 missav01.com</textarea>
                 </div>
 
+                <div class="setting-group">
+                    <label class="setting-label">cf_clearance 쿠키 (surrit.com)</label>
+                    <div class="setting-desc">브라우저 개발자도구 → surrit.com 쿠키의 cf_clearance 값. 서버가 브라우저와 같은 출구 IP일 때 유효 (FlareSolverr보다 우선 사용). 만료되면 다시 붙여넣으세요.</div>
+                    <textarea id="set-cf-cookie" class="setting-textarea" rows="3" placeholder="cf_clearance=... (또는 값만)"></textarea>
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">쿠키 발급 브라우저 User-Agent</label>
+                    <div class="setting-desc">위 cf_clearance를 받은 브라우저의 User-Agent (쿠키는 UA에 묶임). 비우면 firefox 위장 UA 사용.</div>
+                    <input type="text" id="set-cf-ua" class="setting-input-wide" placeholder="Mozilla/5.0 (...) Firefox/133.0">
+                </div>
+
                 <div class="setting-actions">
                     <button class="btn-save" id="saveSettings">저장</button>
                     <button class="btn-reset" id="resetSettings">기본값 복원</button>
@@ -827,6 +839,8 @@ missav01.com</textarea>
             document.getElementById('set-spoofdpi').checked = s.spoofdpi_enabled !== false;
             document.getElementById('set-quality').value = s.video_quality || 'best';
             document.getElementById('set-mirrors').value = (s.mirrors || defaultSettings.mirrors).join('\n');
+            document.getElementById('set-cf-cookie').value = s.cf_cookie || '';
+            document.getElementById('set-cf-ua').value = s.cf_user_agent || '';
             updateToggleText();
         });
     }
@@ -849,7 +863,9 @@ missav01.com</textarea>
             filename_template: document.getElementById('set-filename-template').value.trim() || defaultSettings.filename_template,
             spoofdpi_enabled: document.getElementById('set-spoofdpi').checked,
             video_quality: document.getElementById('set-quality').value,
-            mirrors: mirrors
+            mirrors: mirrors,
+            cf_cookie: document.getElementById('set-cf-cookie').value.trim(),
+            cf_user_agent: document.getElementById('set-cf-ua').value.trim()
         };
 
         fetch('/api/settings', {
