@@ -26,42 +26,6 @@ CROSS_SITE_HEADERS = {
     'Sec-Fetch-Site': 'cross-site',
 }
 
-# --- FlareSolverr (Cloudflare 봇 차단 우회: 헤드리스 브라우저로 cf_clearance 쿠키 획득) ---
-# 다운로더와 같은 Gluetun 망에 FlareSolverr 컨테이너를 띄우면 서버 자신의 IP로 쿠키가 발급된다.
-FLARESOLVERR_URL = os.environ.get('FLARESOLVERR_URL', 'http://localhost:8191/v1')
-_cf_cache = {'cookie': None, 'ua': None, 'ts': 0.0}
-_CF_CACHE_TTL = 900  # cf_clearance 쿠키 재사용 시간(초)
-
-def get_cf_clearance(probe_url, force=False):
-    """FlareSolverr로 surrit.com의 cf_clearance 쿠키와 User-Agent를 얻는다(캐시 사용).
-    반환: (cookie_header, user_agent) 또는 (None, None)."""
-    now = time.time()
-    if not force and _cf_cache['cookie'] and now - _cf_cache['ts'] < _CF_CACHE_TTL:
-        return _cf_cache['cookie'], _cf_cache['ua']
-    try:
-        resp = cffi_requests.post(
-            FLARESOLVERR_URL,
-            json={'cmd': 'request.get', 'url': probe_url, 'maxTimeout': 60000},
-            timeout=90,
-        )
-        data = resp.json()
-        if data.get('status') != 'ok':
-            print(f"[FlareSolverr] 실패: {data.get('message')}", flush=True)
-            return None, None
-        sol = data.get('solution', {})
-        ua = sol.get('userAgent')
-        cookies = sol.get('cookies', [])
-        cookie_header = '; '.join(f"{c['name']}={c['value']}" for c in cookies if c.get('name'))
-        if cookie_header:
-            _cf_cache.update(cookie=cookie_header, ua=ua, ts=now)
-            print(f"[FlareSolverr] cf_clearance 획득 (쿠키 {len(cookies)}개, UA={ua})", flush=True)
-            return cookie_header, ua
-        print("[FlareSolverr] 쿠키가 비어있음", flush=True)
-        return None, None
-    except Exception as e:
-        print(f"[FlareSolverr] 호출 실패(컨테이너 미기동/주소 확인): {e}", flush=True)
-        return None, None
-
 # --- 설정 관리 ---
 DOWNLOAD_DIR = '/downloads'
 SETTINGS_FILE = os.path.join(DOWNLOAD_DIR, '.settings.json')
@@ -76,8 +40,8 @@ DEFAULT_SETTINGS = {
     'video_quality': 'best',
     # 유저스크립트 @match 기준 현재 활성 도메인 (2026.3 기준). 죽은 미러(missav.net/com) 제거.
     'mirrors': ['missav.ai', 'missav.ws', 'missav.live', 'missav.fans', 'missav.media', 'missav123.com', 'missav01.com'],
-    # 브라우저에서 복사한 surrit.com cf_clearance 쿠키/UA. 서버가 브라우저와 같은 출구 IP일 때 유효.
-    # (설정 시 FlareSolverr보다 우선 사용. 쿠키는 수시간 뒤 만료되므로 갱신 필요)
+    # (선택·대개 불필요) surrit.com이 쿠키를 요구하는 경우에만: 브라우저에서 복사한 cf_clearance 쿠키/UA.
+    # 서버가 브라우저와 같은 출구 IP일 때만 유효하고 수시간 뒤 만료된다.
     'cf_cookie': '',
     'cf_user_agent': '',
     'settings_version': SETTINGS_VERSION,
@@ -252,7 +216,7 @@ class MyCustomMissAV(InfoExtractor):
         referer = f"https://{netloc}/"
         origin = f"https://{netloc}"
         final_formats = []
-        cf_cookie, cf_ua = None, None  # FlareSolverr로 받은 cf_clearance 쿠키 / User-Agent
+        cf_cookie, cf_ua = None, None  # (선택) 수동 cf_clearance 쿠키 / User-Agent
 
         def fetch_m3u8(cookie=None, ua=None):
             """여러 TLS 지문으로 마스터 m3u8을 받아 실제 m3u8(#EXTM3U)인지 검증. 본문 반환 or None."""
@@ -333,34 +297,6 @@ class MyCustomMissAV(InfoExtractor):
             'formats': final_formats,
             'age_limit': 18,
         }
-
-
-def select_impersonate_target(ydl):
-    """yt-dlp 다운로드용 impersonate 타깃 선택.
-    surrit.com이 Firefox는 통과시키고 Chrome 지문은 차단하는 정황이 있어 Firefox를 우선 선택하고,
-    백엔드(curl_cffi)에 Firefox 타깃이 없으면 Chrome으로 폴백한다. 사용 불가 시 None 반환."""
-    try:
-        from yt_dlp.networking.impersonate import ImpersonateTarget
-    except Exception:
-        return None
-    # 백엔드가 실제로 지원하는 타깃 목록 조회 (버전에 따라 (target, handler) 튜플 또는 target)
-    available = []
-    try:
-        for item in ydl._get_available_impersonate_targets():
-            available.append(item[0] if isinstance(item, (list, tuple)) else item)
-    except Exception:
-        available = []
-    for client in ('firefox', 'chrome'):
-        want = ImpersonateTarget(client=client)
-        if not available:
-            return want  # 조회 실패 시 일반 타깃으로 시도 (요청 시점에 매칭)
-        for a in available:
-            try:
-                if a in want:  # 사용 가능한 구체 타깃 a가 want(일반) 사양을 만족
-                    return a
-            except Exception:
-                continue
-    return None
 
 
 # --- surrit.com 세그먼트 직접 다운로드 ---

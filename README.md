@@ -1,76 +1,43 @@
 # 🎥 MissAV Downloader Web UI
 
-TrueNAS 및 Docker 환경에서 동작하는 **MissAV 웹 기반 다운로더**입니다.
-통신사 차단(SNI)과 Cloudflare 봇 차단을 우회하기 위해 `curl_cffi` + `yt-dlp` + **FlareSolverr**를 결합했습니다.
+TrueNAS / Docker 환경용 **MissAV 웹 기반 다운로더**. 브라우저에서 URL만 입력하면 백그라운드로 영상을 받아 mp4로 저장합니다.
 
 ## ✨ 주요 기능 (Features)
-- **웹 기반 UI:** 브라우저에서 URL만 입력하면 백그라운드로 다운로드가 진행됩니다.
-- **실시간 진행률:** 초록색 게이지 바로 다운로드 진행률(%)을 표시합니다.
-- **Cloudflare 봇 차단 우회:** 영상 CDN(surrit.com)은 자동화 요청(curl/yt-dlp)을 봇으로 판정해 차단합니다. 직접 요청이 막히면 **FlareSolverr(헤드리스 실제 브라우저)** 로 `cf_clearance` 쿠키를 받아, 그 쿠키로 영상 세그먼트를 받습니다 (쿠키 15분 캐시).
-- **여러 미러 도메인 자동 인식:** `missav.ws / .ai / .live / .fans / .media / missav123.com / missav01.com` 등.
-- **↻ 재시작 버튼:** 실패/취소된 작업을 같은 URL로 즉시 재시도합니다.
-- **작업 취소:** 진행 중인 다운로드를 즉시 강제 종료합니다.
-- **파일명 자동 최적화:** 긴 일본어/한국어 제목으로 인한 저장 에러(`[Errno 36] File name too long`)를 방지합니다.
-
-## 🧩 구성요소 (Architecture)
-정상 동작하려면 **세 가지가 같은 VPN 망**에 있어야 합니다:
-1. **missav-dlp-web** — 다운로더 본체.
-2. **FlareSolverr** — Cloudflare 통과용 헤드리스 브라우저. 다운로더와 **같은 Gluetun 망**(`network_mode: container:gluetun-vpn`)에 있어야 `cf_clearance` 쿠키가 같은 출구 IP로 발급됩니다. **(필수)**
-3. **Gluetun VPN** — 단, **surrit.com에 밴되지 않은 출구 IP**여야 합니다. (아래 ⚠️ 참고)
+- **웹 UI:** URL 입력 → 백그라운드 다운로드, 실시간 진행률(%).
+- **여러 미러 자동 인식:** `missav.ws / .ai / .live / .fans / .media / missav123.com / missav01.com` 등을 로테이션하며 접속 가능한 주소를 찾습니다.
+- **Cloudflare 우회 (핵심):** 영상 CDN(surrit.com)의 Cloudflare는 **직접 접근은 차단**하고 **미러 페이지의 영상 플레이어가 보내는 크로스사이트 요청만 허용**합니다. 그래서 브라우저 플레이어와 동일한 헤더(`Referer` / `Origin` / `Sec-Fetch-*`)를 실어 **`curl_cffi`로 세그먼트를 직접 받아** `ffmpeg`로 mp4로 합칩니다. (VPN·FlareSolverr·쿠키 불필요)
+- **↻ 재시작 버튼:** 실패/취소된 작업을 같은 URL로 재시도.
+- **작업 취소 / 파일명 자동 최적화.**
 
 ## 🛠️ 설치 (Installation)
 
-### 1. `docker-compose.yml`
+### docker-compose.yml
 ```yaml
 services:
   missav-dlp-web:
-    image: ghcr.io/nerdnam/missav-dlp-web:0.0.13
-    network_mode: "container:gluetun-vpn"
+    image: ghcr.io/nerdnam/missav-dlp-web:0.0.14
     restart: unless-stopped
     pull_policy: always
+    ports:
+      - "58000:5000"      # 외부 58000 → 내부 5000
     volumes:
       - /실제/다운로드/경로:/downloads
-
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    network_mode: "container:gluetun-vpn"   # 다운로더와 동일한 VPN IP 공유 (필수)
-    restart: unless-stopped
-    environment:
-      - LOG_LEVEL=info
 ```
-> 두 컨테이너가 같은 네트워크 네임스페이스라, 다운로더는 FlareSolverr를 `http://localhost:8191`로 자동 인식합니다. 다른 구성이라면 다운로더에 `FLARESOLVERR_URL` 환경변수로 지정하세요.
-
-### 2. Gluetun에 포트 노출
-네트워크가 VPN 컨테이너에 종속되므로, 외부 접속 포트는 반드시 **Gluetun 컨테이너 설정**에 추가합니다.
-```yaml
-services:
-  gluetun-vpn:
-    # ... (기존 Gluetun 설정) ...
-    ports:
-      - "58000:5000/tcp"  # 외부 58000 → 다운로더 내부 5000
+```bash
+docker compose pull && docker compose up -d
 ```
+접속: `http://[NAS_또는_서버_IP]:58000`
 
-### 3. 접속
-브라우저에서 `http://[NAS_또는_서버_IP]:58000` 으로 접속합니다.
+> ⚠️ **VPN도 FlareSolverr도 필요 없습니다.** 오히려 **VPN/데이터센터 IP로 나가면 surrit.com에 밴**됩니다. 컨테이너를 **기본(bridge) 네트워크 = 서버의 실제(가정용) IP**로 두세요. 가정용 IP는 surrit.com이 차단하지 않습니다.
 
-## ⚠️ 매우 중요 — VPN 출구 IP 설정
-surrit.com(영상 CDN)의 Cloudflare는 **상용 VPN IP를 광범위하게 차단**하며, **IPv6로는 거의 항상 차단**됩니다. 두 가지를 꼭 지키세요.
-
-**1) VPN을 IPv4 전용으로** — WireGuard 설정에서 IPv6를 제거합니다.
-- `Address`에서 IPv6(`...::.../128`) 삭제 → `Address = 10.2.0.2/32`
-- `AllowedIPs`에서 `::/0` 삭제 → `AllowedIPs = 0.0.0.0/0`
-
-서버가 IPv6로 나가면 그 대역이 차단되어 다운로드가 실패합니다.
-
-**2) 밴되지 않은 서버를 사용** — 일부 VPN 서버는 surrit.com에 밴되어 있어 FlareSolverr(진짜 브라우저)로도 통과하지 못합니다.
-- **브라우저에서 직접 영상이 재생/다운로드되는 바로 그 서버**를 Gluetun에도 사용하세요.
-- 막히면 다른 서버로 교체하면 됩니다(코드·FlareSolverr는 그대로).
+## ⚠️ 통신사(ISP) 도메인 차단
+일부 통신사는 특정 missav 미러를 **SNI 차단**(연결 리셋)합니다. 그런 환경이면 **차단되지 않는 미러 도메인의 URL**로 넣으세요. 앱이 미러를 자동 로테이션하지만, 페이지 접속 자체가 안 되는 도메인은 통신사가 막는 것입니다. (예: 다른 미러가 다 막히면 `missav01.com`을 사용)
 
 ## 🩺 문제 해결 (Troubleshooting)
-- **`[FlareSolverr] 실패: ... IP is banned`** → 현재 VPN 출구 IP가 밴됨. **다른 VPN 서버**로 교체(IPv4 전용 유지). 브라우저에서 실제로 되는 서버를 고르세요.
-- **`[FlareSolverr] 호출 실패`** → FlareSolverr 컨테이너가 안 떴거나 주소가 틀림. 같은 Gluetun 망에 있는지 확인.
-- **작업이 에러로 끝남** → 작업 카드의 `↻ 재시작` 버튼으로 재시도(일시적 차단/네트워크 blip에 효과적).
-- **이미지가 안 바뀜(코드 반영 안 됨)** → Docker 태그 캐시 때문입니다. compose 이미지를 **새 태그**(예: `:0.0.7`)로 지정하고 `docker compose pull` 후 `docker compose up -d`.
+- **`unable to download video data: 403` / 세그먼트 실패** → 서버가 **VPN/데이터센터 IP**로 나가는 상태. surrit.com이 그 IP를 밴한 것 → **실제 가정용 IP(bridge 네트워크)** 로 나가게 하세요.
+- **`페이지 소스를 불러오는 데 실패` / `Connection reset`** → 통신사가 그 미러를 SNI 차단. **다른(안 막힌) 미러 URL** 사용.
+- **작업이 에러로 끝남** → 작업 카드의 `↻ 재시작` 버튼으로 재시도.
+- **이미지가 안 바뀜(코드 반영 안 됨)** → Docker 태그 캐시. compose 이미지를 **새 태그**로 지정하고 `docker compose pull` 후 `docker compose up -d`.
 
 ## ⚠️ 면책 조항 (Disclaimer)
 이 도구는 개인적인 용도로만 사용해야 하며, 다운로드한 콘텐츠의 저작권 및 사용에 대한 책임은 전적으로 사용자 본인에게 있습니다.
