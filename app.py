@@ -126,6 +126,34 @@ app = Flask(__name__, static_folder='templates', static_url_path='/static')
 download_queue = queue.Queue()
 tasks = {}
 
+# --- 작업 목록 영속화 (재시작 시 중단된 다운로드를 재시도할 수 있도록) ---
+TASKS_FILE = os.path.join(DOWNLOAD_DIR, '.tasks.json')
+_tasks_lock = threading.Lock()
+
+def save_tasks():
+    try:
+        with _tasks_lock:
+            with open(TASKS_FILE, 'w') as f:
+                json.dump(dict(tasks), f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def load_tasks():
+    try:
+        if not os.path.exists(TASKS_FILE):
+            return
+        with open(TASKS_FILE) as f:
+            loaded = json.load(f)
+        for tid, t in loaded.items():
+            # 재시작으로 끊긴(진행 중/대기) 작업은 재시도 가능한 '중단' 상태로 표시
+            if t.get('status') in ('다운로드 중', '대기 중'):
+                t['status'] = '에러: 다운로드 중단됨 (재시작하세요)'
+                t['progress'] = '0%'
+            tasks[tid] = t
+        save_tasks()
+    except Exception as e:
+        print(f'[System] tasks 로드 실패: {e}', flush=True)
+
 class DownloadCancelled(Exception):
     pass
 
@@ -438,14 +466,17 @@ def download_video(task_id, url):
                 tasks[task_id]['filesize'] = os.path.getsize(out_path)
             except OSError:
                 pass
+            save_tasks()
         print(f"[완료] {out_name}", flush=True)
     except DownloadCancelled:
         if task_id in tasks:
             tasks[task_id]['status'] = '취소됨'
+            save_tasks()
     except Exception as e:
         print(f"[Error] {url}: {e}", flush=True)
         if task_id in tasks:
             tasks[task_id]['status'] = f'에러: {str(e)[:100]}'
+            save_tasks()
 
 
 # --- 워커 ---
@@ -456,9 +487,11 @@ def worker():
             break
         if task_id in tasks:
             tasks[task_id]['status'] = '다운로드 중'
+            save_tasks()
             download_video(task_id, tasks[task_id]['url'])
         download_queue.task_done()
 
+load_tasks()
 _cleanup_temp_files()
 for _ in range(settings.get('max_concurrent', 4)):
     threading.Thread(target=worker, daemon=True).start()
@@ -476,6 +509,7 @@ def handle_download():
         return jsonify({"status": "error", "message": "URL 입력"}), 400
     task_id = str(uuid.uuid4())
     tasks[task_id] = {'url': url, 'status': '대기 중', 'progress': '0%'}
+    save_tasks()
     download_queue.put(task_id)
     return jsonify({"status": "success", "task_id": task_id})
 
@@ -487,6 +521,7 @@ def get_tasks():
 def delete_task(task_id):
     if task_id in tasks:
         del tasks[task_id]
+        save_tasks()
         return jsonify({"status": "success"})
     return jsonify({"status": "error"}), 404
 
@@ -500,6 +535,7 @@ def retry_task(task_id):
         return jsonify({"status": "error", "message": "이미 진행 중인 작업"}), 400
     tasks[task_id]['status'] = '대기 중'
     tasks[task_id]['progress'] = '0%'
+    save_tasks()
     download_queue.put(task_id)
     print(f"[Retry] 재시도 큐 추가: {tasks[task_id].get('url')}", flush=True)
     return jsonify({"status": "success"})
