@@ -258,15 +258,17 @@ class MyCustomMissAV(InfoExtractor):
                     print(f'⚠️ m3u8 fetch ({tgt}) 실패: {e}', flush=True)
             return None
 
-        # 1차: 쿠키 없이 직접 시도
+        # 1차: 쿠키 없이 마스터 m3u8 직접 시도
         m_text = fetch_m3u8()
 
-        # 2차: 차단되면 FlareSolverr로 cf_clearance 쿠키를 받아 재시도 (서버 자신의 IP로 발급)
-        if not m_text:
-            print('⚠️ 직접 m3u8 차단 → FlareSolverr로 cf_clearance 시도', flush=True)
-            cf_cookie, cf_ua = get_cf_clearance(master_url)
-            if cf_cookie:
-                m_text = fetch_m3u8(cookie=cf_cookie, ua=cf_ua)
+        # 세그먼트(.ts) 다운로드에는 마스터가 통과하더라도 cf_clearance 쿠키가 필요한 경우가 많다.
+        # 그래서 마스터 통과 여부와 무관하게 쿠키를 항상(15분 캐시) 확보해 포맷 헤더에 실어준다.
+        cf_cookie, cf_ua = get_cf_clearance(master_url)
+
+        # 마스터도 막혔으면 확보한 쿠키로 재시도
+        if not m_text and cf_cookie:
+            print('⚠️ 직접 m3u8 차단 → cf_clearance 쿠키로 재시도', flush=True)
+            m_text = fetch_m3u8(cookie=cf_cookie, ua=cf_ua)
 
         # 세그먼트 다운로드까지 쿠키·UA가 전달되도록 포맷 헤더 구성
         fmt_headers = {'Referer': referer, 'Origin': origin}

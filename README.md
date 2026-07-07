@@ -24,7 +24,7 @@ TrueNAS 및 Docker 환경에서 동작하는 **MissAV 웹 기반 다운로더**�
 ```yaml
 services:
   missav-dlp-web:
-    image: ghcr.io/nerdnam/missav-dlp-web:0.0.7
+    image: ghcr.io/nerdnam/missav-dlp-web:0.0.8
     network_mode: "container:gluetun-vpn"
     restart: unless-stopped
     pull_policy: always
