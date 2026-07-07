@@ -369,6 +369,20 @@ def _safe_filename(info, ext='mp4'):
     return f'[{vid}] {title}.{ext}'
 
 
+def _cleanup_temp_files():
+    """이전 실행에서 중간에 끊긴 숨김 임시파일(.*.part.ts)을 정리한다."""
+    try:
+        for f in os.listdir(DOWNLOAD_DIR):
+            if f.startswith('.') and f.endswith('.part.ts'):
+                try:
+                    os.remove(os.path.join(DOWNLOAD_DIR, f))
+                    print(f'[System] 미완료 임시파일 제거: {f}', flush=True)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
 # --- 다운로드 함수 ---
 def download_video(task_id, url):
     try:
@@ -390,7 +404,8 @@ def download_video(task_id, url):
 
         out_name = _safe_filename(info)
         out_path = os.path.join(DOWNLOAD_DIR, out_name)
-        ts_path = out_path + '.part.ts'
+        # 숨김 임시파일(다운로드 목록에 안 보임). 세그먼트를 다 받은 뒤 mp4로 리먹스한다.
+        ts_path = os.path.join(DOWNLOAD_DIR, f'.{info.get("id") or "video"}.part.ts')
 
         # 2. 세그먼트 직접 다운로드
         _download_hls_direct(task_id, variant_url, headers, ts_path)
@@ -399,14 +414,18 @@ def download_video(task_id, url):
                 os.remove(ts_path)
             return
 
-        # 3. mp4로 리먹스 (실패하면 원본 ts 유지)
+        # 3. mp4로 리먹스 (실패하면 원본 ts로 폴백)
         tasks[task_id]['progress'] = '99%'
-        try:
-            subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', ts_path, '-c', 'copy', out_path],
-                           check=True)
-            os.remove(ts_path)
-        except Exception as e:
-            print(f'[ffmpeg] 리먹스 실패 → 원본 ts 저장: {e}', flush=True)
+        print('[ffmpeg] mp4 리먹스 중...', flush=True)
+        proc = subprocess.run(
+            ['ffmpeg', '-y', '-loglevel', 'error', '-i', ts_path, '-c', 'copy', out_path],
+            capture_output=True, text=True,
+        )
+        if proc.returncode == 0 and os.path.exists(out_path):
+            if os.path.exists(ts_path):
+                os.remove(ts_path)
+        else:
+            print(f'[ffmpeg] 리먹스 실패(코드 {proc.returncode}) → ts로 저장: {(proc.stderr or "")[:300]}', flush=True)
             out_name = _safe_filename(info, ext='ts')
             out_path = os.path.join(DOWNLOAD_DIR, out_name)
             os.replace(ts_path, out_path)
@@ -440,6 +459,7 @@ def worker():
             download_video(task_id, tasks[task_id]['url'])
         download_queue.task_done()
 
+_cleanup_temp_files()
 for _ in range(settings.get('max_concurrent', 4)):
     threading.Thread(target=worker, daemon=True).start()
 
