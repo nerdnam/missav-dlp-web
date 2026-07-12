@@ -1,6 +1,7 @@
 import os
 import json
 import subprocess
+import shutil
 import time
 import threading
 import queue
@@ -347,8 +348,13 @@ def _fetch_segment(seg_url, headers):
     raise ValueError(f'세그먼트 실패({last}): {seg_url}')
 
 
-def _download_hls_direct(task_id, variant_url, headers, ts_path):
-    """변형 m3u8을 받아 세그먼트를 curl_cffi로 직접 내려받아 ts_path에 순서대로 이어붙인다."""
+def _download_hls_resumable(task_id, variant_url, headers, out_path):
+    """세그먼트를 개별 파일로 받아(이미 받은 건 스킵=이어받기) 완료 후 ffmpeg concat으로 out_path(mp4)를 만든다.
+    중단(취소/재시작)돼도 세그먼트 폴더가 남아, 재시도 시 남은 세그먼트만 받는다.
+    반환: 최종 파일 경로 (ffmpeg 실패 시 .ts 폴백)."""
+    parts_dir = os.path.join(DOWNLOAD_DIR, f'.{task_id}.parts')
+    os.makedirs(parts_dir, exist_ok=True)
+
     r = None
     for tgt in IMPERSONATE_TARGETS:
         r = cffi_requests.get(variant_url, impersonate=tgt, headers=headers, timeout=20)
@@ -365,16 +371,61 @@ def _download_hls_direct(task_id, variant_url, headers, ts_path):
     total = len(seg_urls)
     if total == 0:
         raise ValueError('세그먼트가 없습니다')
-    print(f'[직접 다운로드] 세그먼트 {total}개', flush=True)
-    with open(ts_path, 'wb') as f, ThreadPoolExecutor(max_workers=8) as ex:
+
+    def seg_path(i):
+        return os.path.join(parts_dir, f'{i:05d}.ts')
+
+    # 이미 받아둔 세그먼트는 건너뛴다 (= 이어받기)
+    pending = [(i, u) for i, u in enumerate(seg_urls)
+               if not (os.path.exists(seg_path(i)) and os.path.getsize(seg_path(i)) > 0)]
+    done = total - len(pending)
+    print(f'[다운로드] 세그먼트 {total}개 (완료 {done} / 남음 {len(pending)})', flush=True)
+    if task_id in tasks:
+        tasks[task_id]['progress'] = f'{int(done * 100 / total)}%'
+
+    def fetch_to_file(item):
+        i, u = item
+        data = _fetch_segment(u, headers)
+        tmp = seg_path(i) + '.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(data)
+        os.replace(tmp, seg_path(i))  # 원자적 저장 — 중단돼도 반쪽 세그먼트가 안 남는다
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
         BATCH = 16
-        for start in range(0, total, BATCH):
+        for start in range(0, len(pending), BATCH):
             if task_id not in tasks:
                 raise DownloadCancelled()
-            batch = seg_urls[start:start + BATCH]
-            for data in ex.map(lambda u: _fetch_segment(u, headers), batch):
-                f.write(data)
-            tasks[task_id]['progress'] = f'{int(min(start + BATCH, total) * 100 / total)}%'
+            batch = pending[start:start + BATCH]
+            list(ex.map(fetch_to_file, batch))
+            done += len(batch)
+            tasks[task_id]['progress'] = f'{int(min(done, total) * 100 / total)}%'
+
+    # 모든 세그먼트 확보 → ffmpeg concat으로 mp4 리먹스
+    if task_id in tasks:
+        tasks[task_id]['progress'] = '99%'
+    list_path = os.path.join(parts_dir, 'filelist.txt')
+    with open(list_path, 'w', encoding='utf-8') as lf:
+        for i in range(total):
+            lf.write(f"file '{seg_path(i)}'\n")
+    print('[ffmpeg] mp4 리먹스 중...', flush=True)
+    proc = subprocess.run(
+        ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0',
+         '-i', list_path, '-c', 'copy', out_path],
+        capture_output=True, text=True,
+    )
+    if proc.returncode == 0 and os.path.exists(out_path):
+        shutil.rmtree(parts_dir, ignore_errors=True)
+        return out_path
+    # ffmpeg 실패 → 세그먼트를 그대로 이어붙인 .ts로 폴백(재생 가능)
+    print(f'[ffmpeg] concat 실패(코드 {proc.returncode}) → ts로 저장: {(proc.stderr or "")[:300]}', flush=True)
+    ts_out = (out_path[:-4] if out_path.endswith('.mp4') else out_path) + '.ts'
+    with open(ts_out, 'wb') as of:
+        for i in range(total):
+            with open(seg_path(i), 'rb') as sf:
+                of.write(sf.read())
+    shutil.rmtree(parts_dir, ignore_errors=True)
+    return ts_out
 
 
 def _pick_format(formats, quality):
@@ -398,15 +449,20 @@ def _safe_filename(info, ext='mp4'):
 
 
 def _cleanup_temp_files():
-    """이전 실행에서 중간에 끊긴 숨김 임시파일(.*.part.ts)을 정리한다."""
+    """구버전 단일 임시파일(.*.part.ts) 제거 + 대응 작업이 없는 세그먼트 폴더(.*.parts) 제거.
+    진행 중이던 작업의 세그먼트 폴더는 이어받기를 위해 남긴다. (load_tasks 뒤에 호출됨)"""
     try:
         for f in os.listdir(DOWNLOAD_DIR):
-            if f.startswith('.') and f.endswith('.part.ts'):
+            full = os.path.join(DOWNLOAD_DIR, f)
+            if f.startswith('.') and f.endswith('.part.ts') and os.path.isfile(full):
                 try:
-                    os.remove(os.path.join(DOWNLOAD_DIR, f))
-                    print(f'[System] 미완료 임시파일 제거: {f}', flush=True)
+                    os.remove(full)
                 except OSError:
                     pass
+            elif f.startswith('.') and f.endswith('.parts') and os.path.isdir(full):
+                if f[1:-6] not in tasks:  # ".{task_id}.parts" → task_id (고아면 제거)
+                    shutil.rmtree(full, ignore_errors=True)
+                    print(f'[System] 고아 세그먼트 폴더 제거: {f}', flush=True)
     except OSError:
         pass
 
@@ -432,38 +488,19 @@ def download_video(task_id, url):
 
         out_name = _safe_filename(info)
         out_path = os.path.join(DOWNLOAD_DIR, out_name)
-        # 숨김 임시파일(다운로드 목록에 안 보임). 세그먼트를 다 받은 뒤 mp4로 리먹스한다.
-        ts_path = os.path.join(DOWNLOAD_DIR, f'.{info.get("id") or "video"}.part.ts')
 
-        # 2. 세그먼트 직접 다운로드
-        _download_hls_direct(task_id, variant_url, headers, ts_path)
+        # 2. 세그먼트 다운로드(이어받기) + mp4 리먹스 → 최종 파일 경로 반환
+        final_path = _download_hls_resumable(task_id, variant_url, headers, out_path)
         if task_id not in tasks:
-            if os.path.exists(ts_path):
-                os.remove(ts_path)
             return
-
-        # 3. mp4로 리먹스 (실패하면 원본 ts로 폴백)
-        tasks[task_id]['progress'] = '99%'
-        print('[ffmpeg] mp4 리먹스 중...', flush=True)
-        proc = subprocess.run(
-            ['ffmpeg', '-y', '-loglevel', 'error', '-i', ts_path, '-c', 'copy', out_path],
-            capture_output=True, text=True,
-        )
-        if proc.returncode == 0 and os.path.exists(out_path):
-            if os.path.exists(ts_path):
-                os.remove(ts_path)
-        else:
-            print(f'[ffmpeg] 리먹스 실패(코드 {proc.returncode}) → ts로 저장: {(proc.stderr or "")[:300]}', flush=True)
-            out_name = _safe_filename(info, ext='ts')
-            out_path = os.path.join(DOWNLOAD_DIR, out_name)
-            os.replace(ts_path, out_path)
+        out_name = os.path.basename(final_path)
 
         if task_id in tasks:
             tasks[task_id]['status'] = '완료'
             tasks[task_id]['progress'] = '100%'
             tasks[task_id]['filename'] = out_name
             try:
-                tasks[task_id]['filesize'] = os.path.getsize(out_path)
+                tasks[task_id]['filesize'] = os.path.getsize(final_path)
             except OSError:
                 pass
             save_tasks()
@@ -522,6 +559,7 @@ def delete_task(task_id):
     if task_id in tasks:
         del tasks[task_id]
         save_tasks()
+        shutil.rmtree(os.path.join(DOWNLOAD_DIR, f'.{task_id}.parts'), ignore_errors=True)
         return jsonify({"status": "success"})
     return jsonify({"status": "error"}), 404
 

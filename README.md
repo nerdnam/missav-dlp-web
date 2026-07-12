@@ -6,7 +6,7 @@ TrueNAS / Docker 환경용 **MissAV 웹 기반 다운로더**. 브라우저에�
 - **웹 UI:** URL 입력 → 백그라운드 다운로드, 실시간 진행률(%).
 - **여러 미러 자동 인식:** `missav.ws / .ai / .live / .fans / .media / missav123.com / missav01.com` 등을 로테이션하며 접속 가능한 주소를 찾습니다.
 - **Cloudflare 우회 (핵심):** 영상 CDN(surrit.com)의 Cloudflare는 **직접 접근은 차단**하고 **미러 페이지의 영상 플레이어가 보내는 크로스사이트 요청만 허용**합니다. 그래서 브라우저 플레이어와 동일한 헤더(`Referer` / `Origin` / `Sec-Fetch-*`)를 실어 **`curl_cffi`로 세그먼트를 직접 받아** `ffmpeg`로 mp4로 합칩니다. (VPN·FlareSolverr·쿠키 불필요)
-- **↻ 재시작 버튼:** 실패/취소된 작업을 같은 URL로 재시도.
+- **↻ 재시작 = 이어받기:** 실패/중단된 다운로드를 재시작하면 **이미 받은 세그먼트는 건너뛰고** 남은 것만 받습니다. 작업 목록은 디스크에 저장되어 컨테이너 재시작 후에도 남습니다.
 - **작업 취소 / 파일명 자동 최적화.**
 
 ## 🛠️ 설치 (Installation)
@@ -15,7 +15,7 @@ TrueNAS / Docker 환경용 **MissAV 웹 기반 다운로더**. 브라우저에�
 ```yaml
 services:
   missav-dlp-web:
-    image: ghcr.io/nerdnam/missav-dlp-web:0.0.17
+    image: ghcr.io/nerdnam/missav-dlp-web:0.0.18
     restart: unless-stopped
     pull_policy: always
     ports:
