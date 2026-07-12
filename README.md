@@ -6,7 +6,7 @@ TrueNAS / Docker 환경용 **MissAV 웹 기반 다운로더**. 브라우저에�
 - **웹 UI:** URL 입력 → 백그라운드 다운로드, 실시간 진행률(%).
 - **여러 미러 자동 인식:** `missav.ws / .ai / .live / .fans / .media / missav123.com / missav01.com` 등을 로테이션하며 접속 가능한 주소를 찾습니다.
 - **Cloudflare 우회 (핵심):** 영상 CDN(surrit.com)의 Cloudflare는 **직접 접근은 차단**하고 **미러 페이지의 영상 플레이어가 보내는 크로스사이트 요청만 허용**합니다. 그래서 브라우저 플레이어와 동일한 헤더(`Referer` / `Origin` / `Sec-Fetch-*`)를 실어 **`curl_cffi`로 세그먼트를 직접 받아** `ffmpeg`로 mp4로 합칩니다. (VPN·FlareSolverr·쿠키 불필요)
-- **↻ 재시작 = 이어받기:** 실패/중단된 다운로드를 재시작하면 **이미 받은 세그먼트는 건너뛰고** 남은 것만 받습니다. 작업 목록은 디스크에 저장되어 컨테이너 재시작 후에도 남습니다.
+- **이어받기 + 자동 재시도:** 다운로드가 끊겨도 **이미 받은 세그먼트는 건너뛰고** 남은 것만 받습니다. 실패/중단된 작업은 **서버가 알아서 이어받아 자동 재시도**(브라우저 안 켜도 됨)하며, 작업당 재시도 상한이 있어 무한 반복하지 않습니다. 물론 `↻ 재시작` 버튼으로 즉시 재시도도 가능. 작업 목록은 디스크에 저장돼 컨테이너 재시작 후에도 이어집니다. (설정에서 끌 수 있음)
 - **작업 취소 / 파일명 자동 최적화.**
 
 ## 🛠️ 설치 (Installation)
@@ -15,7 +15,7 @@ TrueNAS / Docker 환경용 **MissAV 웹 기반 다운로더**. 브라우저에�
 ```yaml
 services:
   missav-dlp-web:
-    image: ghcr.io/nerdnam/missav-dlp-web:0.0.18
+    image: ghcr.io/nerdnam/missav-dlp-web:0.0.19
     restart: unless-stopped
     pull_policy: always
     ports:
@@ -36,7 +36,7 @@ docker compose pull && docker compose up -d
 ## 🩺 문제 해결 (Troubleshooting)
 - **`unable to download video data: 403` / 세그먼트 실패** → 서버가 **VPN/데이터센터 IP**로 나가는 상태. surrit.com이 그 IP를 밴한 것 → **실제 가정용 IP(bridge 네트워크)** 로 나가게 하세요.
 - **`페이지 소스를 불러오는 데 실패` / `Connection reset`** → 통신사가 그 미러를 SNI 차단. **다른(안 막힌) 미러 URL** 사용.
-- **작업이 에러로 끝남** → 작업 카드의 `↻ 재시작` 버튼으로 재시도.
+- **작업이 에러로 끝남** → 자동 재시도(기본 켜짐)가 이어받아 다시 시도합니다. 즉시 하려면 `↻ 재시작` 버튼. 계속 실패하면 미러/네트워크(위 항목) 문제입니다.
 - **이미지가 안 바뀜(코드 반영 안 됨)** → Docker 태그 캐시. compose 이미지를 **새 태그**로 지정하고 `docker compose pull` 후 `docker compose up -d`.
 
 ## ⚠️ 면책 조항 (Disclaimer)

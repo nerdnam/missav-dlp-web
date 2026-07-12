@@ -45,6 +45,9 @@ DEFAULT_SETTINGS = {
     # 서버가 브라우저와 같은 출구 IP일 때만 유효하고 수시간 뒤 만료된다.
     'cf_cookie': '',
     'cf_user_agent': '',
+    # 자동 재시도: 끊긴/실패한 작업을 주기적으로 자동 재큐잉(이어받기). 동시 수는 max_concurrent가 제한.
+    'auto_retry': True,
+    'auto_retry_max': 30,   # 작업당 자동 재시도 상한 (무한루프 방지)
     'settings_version': SETTINGS_VERSION,
 }
 
@@ -528,10 +531,39 @@ def worker():
             download_video(task_id, tasks[task_id]['url'])
         download_queue.task_done()
 
+AUTO_RETRY_INTERVAL = 15  # 초. 실패/중단 작업을 얼마나 자주 자동 재큐잉할지.
+
+def auto_retry_monitor():
+    """실패/중단된 작업을 주기적으로 자동 재큐잉한다(이어받기).
+    동시 다운로드 수는 워커 수(max_concurrent)가 제한하고,
+    작업당 재시도 횟수는 auto_retry_max로 상한을 둬 무한루프를 막는다.
+    (컨테이너 재시작으로 '중단' 표시된 작업도 자동으로 이어받게 된다.)"""
+    while True:
+        time.sleep(AUTO_RETRY_INTERVAL)
+        try:
+            if not settings.get('auto_retry', True):
+                continue
+            cap = int(settings.get('auto_retry_max', 30))
+            for tid, t in list(tasks.items()):
+                if not t.get('status', '').startswith('에러'):
+                    continue
+                n = t.get('retries', 0)
+                if n >= cap:
+                    continue
+                t['retries'] = n + 1
+                t['status'] = '대기 중'
+                t['progress'] = '0%'
+                save_tasks()
+                download_queue.put(tid)
+                print(f"[자동재시도] ({t['retries']}/{cap}) {t.get('url')}", flush=True)
+        except Exception as e:
+            print(f'[자동재시도] 오류: {e}', flush=True)
+
 load_tasks()
 _cleanup_temp_files()
 for _ in range(settings.get('max_concurrent', 4)):
     threading.Thread(target=worker, daemon=True).start()
+threading.Thread(target=auto_retry_monitor, daemon=True).start()
 
 
 # --- 라우팅 ---
@@ -573,6 +605,7 @@ def retry_task(task_id):
         return jsonify({"status": "error", "message": "이미 진행 중인 작업"}), 400
     tasks[task_id]['status'] = '대기 중'
     tasks[task_id]['progress'] = '0%'
+    tasks[task_id]['retries'] = 0   # 수동 재시작은 자동 재시도 예산을 초기화
     save_tasks()
     download_queue.put(task_id)
     print(f"[Retry] 재시도 큐 추가: {tasks[task_id].get('url')}", flush=True)
@@ -608,7 +641,7 @@ def update_settings():
     new_settings = request.json
     settings.update(new_settings)
     save_settings(settings)
-    return jsonify({"status": "success"})
+    return jsonify({"status": "success", "message": "설정이 저장되었습니다. (동시 다운로드 수 변경은 재시작 후 적용)"})
 
 if __name__ == '__main__':
     print(f"\n{'='*50}")

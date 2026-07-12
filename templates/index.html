@@ -531,6 +531,22 @@
                 </div>
 
                 <div class="setting-group">
+                    <label class="setting-label">자동 재시도 (이어받기)</label>
+                    <div class="setting-desc">끊기거나 실패한 다운로드를 서버가 자동으로 이어받아 재시도합니다. (브라우저를 켜둘 필요 없음)</div>
+                    <label class="toggle">
+                        <input type="checkbox" id="set-auto-retry" checked>
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-text" id="auto-retry-text">활성</span>
+                    </label>
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">자동 재시도 최대 횟수</label>
+                    <div class="setting-desc">작업 하나당 자동 재시도 상한 (무한 반복 방지). 이어받기라 실패해도 매번 조금씩 진행됩니다.</div>
+                    <input type="number" id="set-auto-retry-max" class="setting-input" min="1" max="200" value="30">
+                </div>
+
+                <div class="setting-group">
                     <label class="setting-label">파일명 템플릿</label>
                     <div class="setting-desc">yt-dlp 파일명 형식. %(id)s=영상ID, %(title)s=제목, .60s=60자 제한</div>
                     <input type="text" id="set-filename-template" class="setting-input-wide" value="[%(id)s] %(title).60s.%(ext)s">
@@ -830,6 +846,8 @@ missav01.com</textarea>
         filename_template: '[%(id)s] %(title).60s.%(ext)s',
         spoofdpi_enabled: true,
         video_quality: 'best',
+        auto_retry: true,
+        auto_retry_max: 30,
         mirrors: ['missav.ai', 'missav.ws', 'missav.live', 'missav.fans', 'missav.media', 'missav123.com', 'missav01.com']
     };
 
@@ -838,6 +856,8 @@ missav01.com</textarea>
             document.getElementById('set-max-concurrent').value = s.max_concurrent || 4;
             document.getElementById('set-filename-template').value = s.filename_template || defaultSettings.filename_template;
             document.getElementById('set-spoofdpi').checked = s.spoofdpi_enabled !== false;
+            document.getElementById('set-auto-retry').checked = s.auto_retry !== false;
+            document.getElementById('set-auto-retry-max').value = s.auto_retry_max || 30;
             document.getElementById('set-quality').value = s.video_quality || 'best';
             document.getElementById('set-mirrors').value = (s.mirrors || defaultSettings.mirrors).join('\n');
             document.getElementById('set-cf-cookie').value = s.cf_cookie || '';
@@ -847,11 +867,14 @@ missav01.com</textarea>
     }
 
     function updateToggleText() {
-        var checked = document.getElementById('set-spoofdpi').checked;
-        document.getElementById('spoofdpi-text').textContent = checked ? '활성' : '비활성';
+        document.getElementById('spoofdpi-text').textContent =
+            document.getElementById('set-spoofdpi').checked ? '활성' : '비활성';
+        document.getElementById('auto-retry-text').textContent =
+            document.getElementById('set-auto-retry').checked ? '활성' : '비활성';
     }
 
     document.getElementById('set-spoofdpi').addEventListener('change', updateToggleText);
+    document.getElementById('set-auto-retry').addEventListener('change', updateToggleText);
 
     document.getElementById('saveSettings').addEventListener('click', function() {
         var mirrors = document.getElementById('set-mirrors').value
@@ -863,6 +886,8 @@ missav01.com</textarea>
             max_concurrent: parseInt(document.getElementById('set-max-concurrent').value) || 4,
             filename_template: document.getElementById('set-filename-template').value.trim() || defaultSettings.filename_template,
             spoofdpi_enabled: document.getElementById('set-spoofdpi').checked,
+            auto_retry: document.getElementById('set-auto-retry').checked,
+            auto_retry_max: parseInt(document.getElementById('set-auto-retry-max').value) || 30,
             video_quality: document.getElementById('set-quality').value,
             mirrors: mirrors,
             cf_cookie: document.getElementById('set-cf-cookie').value.trim(),
