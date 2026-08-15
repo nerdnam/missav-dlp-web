@@ -28,13 +28,54 @@ docker compose pull && docker compose up -d
 ```
 접속: `http://[NAS_또는_서버_IP]:58000`
 
-> ⚠️ **VPN도 FlareSolverr도 필요 없습니다.** 오히려 **VPN/데이터센터 IP로 나가면 surrit.com에 밴**됩니다. 컨테이너를 **기본(bridge) 네트워크 = 서버의 실제(가정용) IP**로 두세요. 가정용 IP는 surrit.com이 차단하지 않습니다.
+> ⚠️ **기본 구성에는 VPN도 FlareSolverr도 필요 없습니다.** 컨테이너를 **기본(bridge) 네트워크 = 서버의 실제(가정용) IP**로 두면 됩니다. 다만 **VPN/데이터센터 IP 중 일부는 surrit.com에 밴**되어 있으니, VPN을 써야 한다면 아래 구성을 참고하세요.
+
+### (선택) VPN(gluetun) 경유 구성
+가정용 IP로 미러 접속 자체가 안 되거나(통신사 차단) VPN 뒤에서 돌리고 싶다면 [docker-compose.gluetun.yml](docker-compose.gluetun.yml)을 사용하세요. gluetun과 다운로더를 **한 스택**으로 올리고 다운로더가 gluetun의 네트워크를 공유합니다.
+```yaml
+services:
+  gluetun-vpn:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun-vpn
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    environment:
+      - VPN_SERVICE_PROVIDER=custom
+      - VPN_TYPE=wireguard
+      - WIREGUARD_CONFIG_FILE=/gluetun/wireguard/wg0.conf
+      - FIREWALL_INBOUND_PORTS=5000        # 웹 UI 허용
+      - DNS_TYPE=1.1.1.1
+    ports:
+      - "58000:5000/tcp"                   # 웹 UI는 gluetun 쪽에서 공개
+    volumes:
+      - /gluetun/설정/경로:/gluetun
+    restart: unless-stopped
+
+  missav-dlp-web:
+    image: ghcr.io/nerdnam/missav-dlp-web:0.0.19
+    pull_policy: always
+    restart: unless-stopped
+    network_mode: container:gluetun-vpn    # ports: 를 두면 안 됨
+    depends_on: [gluetun-vpn]
+    volumes:
+      - /실제/다운로드/경로:/downloads
+```
+```bash
+docker compose -f docker-compose.gluetun.yml pull && docker compose -f docker-compose.gluetun.yml up -d
+```
+주의사항:
+- `network_mode: container:...`를 쓰는 서비스는 **자기 `ports:`를 가질 수 없습니다.** 웹 UI 포트(`58000:5000`)는 gluetun에서 공개하고 `FIREWALL_INBOUND_PORTS`에 `5000`을 넣어야 접속됩니다.
+- **WireGuard 설정(wg0.conf)은 IPv4 전용**으로 두세요 (`Address`의 `::/128`, `AllowedIPs`의 `::/0` 제거). IPv6 출구는 surrit.com이 차단합니다.
+- 세그먼트 다운로드가 `403`이면 그 **VPN 서버 출구 IP가 surrit.com에 밴**된 것입니다. 브라우저에서 영상 재생이 되는 다른 서버의 wg0.conf로 바꾸세요. 코드/설정 문제가 아닙니다.
+- gluetun 컨테이너를 재생성했다면 다운로더도 다시 `up -d` 해야 네트워크가 다시 붙습니다.
+- TrueNAS SCALE에서는 **Apps → Custom App(YAML)** 하나에 위 내용을 통째로 넣으면 됩니다. 기존에 따로 띄운 다운로더 앱이 있으면 포트/이름 충돌이 나므로 먼저 지우세요.
+- 출구 IP 확인: `docker exec gluetun-vpn wget -qO- https://api.ipify.org`
 
 ## ⚠️ 통신사(ISP) 도메인 차단
 일부 통신사는 특정 missav 미러를 **SNI 차단**(연결 리셋)합니다. 그런 환경이면 **차단되지 않는 미러 도메인의 URL**로 넣으세요. 앱이 미러를 자동 로테이션하지만, 페이지 접속 자체가 안 되는 도메인은 통신사가 막는 것입니다. (예: 다른 미러가 다 막히면 `missav01.com`을 사용)
 
 ## 🩺 문제 해결 (Troubleshooting)
-- **`unable to download video data: 403` / 세그먼트 실패** → 서버가 **VPN/데이터센터 IP**로 나가는 상태. surrit.com이 그 IP를 밴한 것 → **실제 가정용 IP(bridge 네트워크)** 로 나가게 하세요.
+- **`unable to download video data: 403` / 세그먼트 실패** → 서버의 출구 IP를 surrit.com이 밴한 것. **실제 가정용 IP(bridge 네트워크)** 로 나가게 하거나, VPN을 쓴다면 **브라우저에서 재생되는 다른 VPN 서버**로 바꾸세요 (IPv4 전용 설정 확인).
 - **`페이지 소스를 불러오는 데 실패` / `Connection reset`** → 통신사가 그 미러를 SNI 차단. **다른(안 막힌) 미러 URL** 사용.
 - **작업이 에러로 끝남** → 자동 재시도(기본 켜짐)가 이어받아 다시 시도합니다. 즉시 하려면 `↻ 재시작` 버튼. 계속 실패하면 미러/네트워크(위 항목) 문제입니다.
 - **이미지가 안 바뀜(코드 반영 안 됨)** → Docker 태그 캐시. compose 이미지를 **새 태그**로 지정하고 `docker compose pull` 후 `docker compose up -d`.
