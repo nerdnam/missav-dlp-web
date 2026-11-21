@@ -66,7 +66,7 @@ docker compose -f docker-compose.gluetun.yml pull && docker compose -f docker-co
 주의사항:
 - `network_mode: container:...`를 쓰는 서비스는 **자기 `ports:`를 가질 수 없습니다.** 웹 UI 포트(`58000:5000`)는 gluetun에서 공개하고 `FIREWALL_INBOUND_PORTS`에 `5000`을 넣어야 접속됩니다.
 - **WireGuard 설정(wg0.conf)은 IPv4 전용**으로 두세요 (`Address`의 `::/128`, `AllowedIPs`의 `::/0` 제거). IPv6 출구는 surrit.com이 차단합니다.
-- 세그먼트 다운로드가 `403`이면 그 **VPN 서버 출구 IP가 surrit.com에 밴**된 것입니다. 브라우저에서 영상 재생이 되는 다른 서버의 wg0.conf로 바꾸세요. 코드/설정 문제가 아닙니다.
+- `403`만으로 VPN 출구 IP 차단을 단정할 수 없습니다. 먼저 로그의 CDN 주소와 응답 내용을 확인하세요. 브라우저와 컨테이너가 같은 VPN 출구를 사용하는지도 확인해야 합니다.
 - gluetun 컨테이너를 재생성했다면 다운로더도 다시 `up -d` 해야 네트워크가 다시 붙습니다.
 - TrueNAS SCALE에서는 **Apps → Custom App(YAML)** 하나에 위 내용을 통째로 넣으면 됩니다. 기존에 따로 띄운 다운로더 앱이 있으면 포트/이름 충돌이 나므로 먼저 지우세요.
 - 출구 IP 확인: `docker exec gluetun-vpn wget -qO- https://api.ipify.org`
@@ -75,10 +75,15 @@ docker compose -f docker-compose.gluetun.yml pull && docker compose -f docker-co
 일부 통신사는 특정 missav 미러를 **SNI 차단**(연결 리셋)합니다. 그런 환경이면 **차단되지 않는 미러 도메인의 URL**로 넣으세요. 앱이 미러를 자동 로테이션하지만, 페이지 접속 자체가 안 되는 도메인은 통신사가 막는 것입니다. (예: 다른 미러가 다 막히면 `missav01.com`을 사용)
 
 ## 🩺 문제 해결 (Troubleshooting)
-- **`unable to download video data: 403` / 세그먼트 실패** → 서버의 출구 IP를 surrit.com이 밴한 것. **실제 가정용 IP(bridge 네트워크)** 로 나가게 하거나, VPN을 쓴다면 **브라우저에서 재생되는 다른 VPN 서버**로 바꾸세요 (IPv4 전용 설정 확인).
+- **`Failed to download m3u8 information: HTTP Error 403` / `BucketPunish`** → 옛 CDN `surrit.com`의 저장소 응답일 수 있습니다. 브라우저가 사용하는 `c.surrit.com`과 주소를 비교하세요. 수정된 추출기는 페이지의 실제 재생 URL을 읽고, 옛 도메인이 실패하면 `c.surrit.com`으로 재시도합니다. 화질별 목록과 세그먼트에도 성공한 CDN 주소가 유지됩니다.
+- **`unable to download video data: 403` / 세그먼트 실패** → CDN 주소, 쿠키 만료, 서버와 브라우저의 출구 IP 차이를 확인하세요. VPN 사용 시 브라우저도 같은 VPN 경로에서 비교해야 합니다.
 - **`페이지 소스를 불러오는 데 실패` / `Connection reset`** → 통신사가 그 미러를 SNI 차단. **다른(안 막힌) 미러 URL** 사용.
 - **작업이 에러로 끝남** → 자동 재시도(기본 켜짐)가 이어받아 다시 시도합니다. 즉시 하려면 `↻ 재시작` 버튼. 계속 실패하면 미러/네트워크(위 항목) 문제입니다.
 - **이미지가 안 바뀜(코드 반영 안 됨)** → Docker 태그 캐시. compose 이미지를 **새 태그**로 지정하고 `docker compose pull` 후 `docker compose up -d`.
+
+소스에서 실행하는 기본 구성은 `docker compose up -d --build`로 수정 코드를 반영합니다. 레지스트리 이미지를 사용하는 VPN 구성은 수정 코드로 빌드한 이미지가 필요하며, 기존 `0.0.19` 이미지를 재시작하는 것만으로는 반영되지 않습니다.
+
+회귀 테스트: `python -m unittest discover -s tests -v` (실제 다운로드나 저장된 작업 변경 없이 실행).
 
 ## ⚠️ 면책 조항 (Disclaimer)
 이 도구는 개인적인 용도로만 사용해야 하며, 다운로드한 콘텐츠의 저작권 및 사용에 대한 책임은 전적으로 사용자 본인에게 있습니다.

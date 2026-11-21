@@ -12,6 +12,7 @@ from flask import Flask, request, render_template, jsonify, send_file, Response
 import yt_dlp
 from yt_dlp.extractor.common import InfoExtractor
 from curl_cffi import requests as cffi_requests
+from hls_urls import playlist_candidates, playlist_entries
 
 # surrit.com CDN의 Cloudflare 봇 차단 통과용 브라우저 TLS 지문 후보.
 # 실사용상 Firefox 지문이 가장 잘 통과되어 Firefox 전용으로 시도한다.
@@ -187,10 +188,10 @@ class MyCustomMissAV(InfoExtractor):
             for proxy in proxy_list:
                 try:
                     proxies = {"https": proxy, "http": proxy} if proxy else None
-                    res = cffi_requests.get(test_url, impersonate="chrome110", timeout=20, proxies=proxies)
+                    res = cffi_requests.get(test_url, impersonate="chrome", timeout=20, proxies=proxies)
                     if res.status_code == 200 and ('seek' in res.text or 'm3u8' in res.text):
                         webpage = res.text
-                        used_url = test_url
+                        used_url = res.url or test_url
                         print(f'✅ 페이지 접속 성공: {mirror} (proxy={proxy})', flush=True)
                         break
                 except Exception as e:
@@ -202,74 +203,47 @@ class MyCustomMissAV(InfoExtractor):
         if not webpage:
             raise ValueError("페이지 소스를 불러오는 데 실패했습니다. (Cloudflare 차단 의심)")
 
-        # 2. UUID 추출 - script 태그별로 검사 + UUID 형식 검증
-        video_uuid = None
-        script_contents = re.findall(r'<script[^>]*>(.*?)</script>', webpage, re.DOTALL)
-        print(f'[UUID] script 태그 수: {len(script_contents)}', flush=True)
+        # 2. 플레이어의 실제 URL 추출 (난독화 스크립트 포함). CDN 호스트를 고정하지 않는다.
+        master_urls = playlist_candidates(webpage, used_url)
+        if not master_urls:
+            raise ValueError("페이지에서 영상 재생목록(m3u8) 주소를 찾을 수 없습니다.")
 
-        for idx, script_content in enumerate(script_contents):
-            seek_index = script_content.find('seek')
-            if seek_index != -1 and seek_index >= 38:
-                candidate = script_content[seek_index - 38: seek_index - 2]
-                if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', candidate):
-                    video_uuid = candidate
-                    print(f'✅ UUID 발견 (script #{idx+1}): {video_uuid}', flush=True)
-                    break
-
-        # fallback1: 전체 HTML에서 seek 주변 검색
-        if not video_uuid:
-            seek_idx = webpage.find('seek')
-            while seek_idx != -1:
-                if seek_idx >= 38:
-                    candidate = webpage[seek_idx - 38: seek_idx - 2]
-                    if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', candidate):
-                        video_uuid = candidate
-                        print(f'✅ UUID fallback1: {video_uuid}', flush=True)
-                        break
-                seek_idx = webpage.find('seek', seek_idx + 1)
-
-        # fallback2: 정규식으로 UUID 패턴 검색
-        if not video_uuid:
-            uuid_match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', webpage)
-            if uuid_match:
-                video_uuid = uuid_match.group(1)
-                print(f'✅ UUID fallback2: {video_uuid}', flush=True)
-
-        if not video_uuid:
-            raise ValueError("영상 고유 ID(UUID)를 찾을 수 없습니다.")
-
-        # 3. 마스터 m3u8 주소 구성
-        master_url = f"https://surrit.com/{video_uuid}/playlist.m3u8"
-        print(f'🔗 마스터 m3u8: {master_url}', flush=True)
-
-        # 4. 화질별 m3u8 URL 생성
+        # 3. 화질별 m3u8 URL 생성
         # 브라우저 referrer-policy(strict-origin-when-cross-origin)와 동일하게 Referer는 오리진만 전송
         netloc = urlparse(used_url).netloc
         referer = f"https://{netloc}/"
         origin = f"https://{netloc}"
-        final_formats = []
         cf_cookie, cf_ua = None, None  # (선택) 수동 cf_clearance 쿠키 / User-Agent
+        failures = []
 
         def fetch_m3u8(cookie=None, ua=None):
-            """여러 TLS 지문으로 마스터 m3u8을 받아 실제 m3u8(#EXTM3U)인지 검증. 본문 반환 or None."""
-            for tgt in IMPERSONATE_TARGETS:
-                try:
-                    h = {'Referer': referer, 'Origin': origin, **CROSS_SITE_HEADERS}
-                    if cookie:
-                        h['Cookie'] = cookie
-                    if ua:
-                        h['User-Agent'] = ua
-                    r = cffi_requests.get(master_url, impersonate=tgt, timeout=15, headers=h)
-                    tag = 'm3u8+cf' if cookie else 'm3u8'
-                    print(f'[{tag}] {tgt} 응답코드: {r.status_code}', flush=True)
-                    if r.status_code == 200 and '#EXTM3U' in r.text:
-                        return r.text
-                except Exception as e:
-                    print(f'⚠️ m3u8 fetch ({tgt}) 실패: {e}', flush=True)
+            """성공한 응답을 반환하여 리다이렉트 후 CDN 주소도 그대로 유지한다."""
+            for master_url in master_urls:
+                for tgt in IMPERSONATE_TARGETS:
+                    try:
+                        h = {'Referer': referer, 'Origin': origin, **CROSS_SITE_HEADERS}
+                        if cookie:
+                            h['Cookie'] = cookie
+                        if ua:
+                            h['User-Agent'] = ua
+                        r = cffi_requests.get(master_url, impersonate=tgt, timeout=15, headers=h)
+                        tag = 'm3u8+cf' if cookie else 'm3u8'
+                        print(f'[{tag}] {tgt} {master_url} 응답코드: {r.status_code}', flush=True)
+                        if r.status_code == 200 and r.text.lstrip('\ufeff \t\r\n').startswith('#EXTM3U'):
+                            return r
+                        code = re.search(r'<Code>([A-Za-z0-9_-]+)</Code>', r.text)
+                        detail = code.group(1) if code else '유효한 m3u8 없음'
+                        failures.append(f'{urlparse(master_url).netloc}: HTTP {r.status_code} ({detail})')
+                        if code and code.group(1) == 'BucketPunish':
+                            # 저장소 오류는 브라우저 지문 변경으로 해결되지 않는다.
+                            break
+                    except Exception as e:
+                        failures.append(f'{urlparse(master_url).netloc}: 연결 실패')
+                        print(f'⚠️ m3u8 fetch ({tgt}) 실패: {e}', flush=True)
             return None
 
         # 1차: 쿠키 없이 마스터 m3u8 직접 시도
-        m_text = fetch_m3u8()
+        manifest = fetch_m3u8()
 
         # 세그먼트는 쿠키 없이 헤더(Sec-Fetch cross-site)만으로 통과한다(브라우저 실측 확인).
         # 설정에 수동 cf_clearance가 있으면 선택적으로 함께 보낸다.
@@ -281,9 +255,9 @@ class MyCustomMissAV(InfoExtractor):
             print('[cf] 수동 cf_clearance 쿠키 사용', flush=True)
 
         # 마스터도 막혔으면 확보한 쿠키로 재시도
-        if not m_text and cf_cookie:
+        if manifest is None and cf_cookie:
             print('⚠️ 직접 m3u8 차단 → cf_clearance 쿠키로 재시도', flush=True)
-            m_text = fetch_m3u8(cookie=cf_cookie, ua=cf_ua)
+            manifest = fetch_m3u8(cookie=cf_cookie, ua=cf_ua)
 
         # 세그먼트 다운로드도 플레이어처럼(크로스사이트) 보이도록 헤더 구성 + 쿠키·UA 전달
         fmt_headers = {'Referer': referer, 'Origin': origin, **CROSS_SITE_HEADERS}
@@ -292,34 +266,17 @@ class MyCustomMissAV(InfoExtractor):
         if cf_ua:
             fmt_headers['User-Agent'] = cf_ua
 
-        if m_text:
-            for line in m_text.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    quality_url = f"https://surrit.com/{video_uuid}/{line}"
-                    quality_label = line.split('/')[0]
-                    height = None
-                    try:
-                        height = int(re.search(r'(\d+)', quality_label).group(1))
-                    except Exception:
-                        pass
-                    final_formats.append({
-                        'url': quality_url,
-                        'ext': 'mp4',
-                        'format_id': f'hls-{quality_label}',
-                        'height': height,
-                        'quality': height or 0,
-                        'protocol': 'm3u8_native',
-                        'http_headers': dict(fmt_headers),
-                    })
-                    print(f'[포맷] {quality_label} -> {quality_url}', flush=True)
+        if manifest is None:
+            raise ValueError('재생목록 요청 실패: ' + '; '.join(dict.fromkeys(failures)))
 
-        # 그래도 결과가 없으면 yt-dlp 네트워킹(impersonate + 쿠키)으로 폴백
+        # 이미 받은 본문만 파싱한다. 절대/상대 URL과 해상도 태그를 처리하고,
+        # 다른 네트워크 클라이언트로 같은 실패 요청을 반복하지 않는다.
+        final_formats, _ = self._parse_m3u8_formats_and_subtitles(
+            manifest.text, manifest.url, ext='mp4', m3u8_id='hls')
+        for fmt in final_formats:
+            fmt['http_headers'] = dict(fmt_headers)
         if not final_formats:
-            print('⚠️ 직접 m3u8 추출 실패 → yt-dlp 폴백', flush=True)
-            final_formats = self._extract_m3u8_formats(
-                master_url, video_id, 'mp4', m3u8_id='hls', headers=fmt_headers,
-            )
+            raise ValueError('재생목록에 사용 가능한 화질이 없습니다.')
 
         final_formats.sort(key=lambda x: x.get('quality', 0) or x.get('height', 0) or 0, reverse=True)
 
@@ -365,12 +322,7 @@ def _download_hls_resumable(task_id, variant_url, headers, out_path):
             break
     if not r or r.status_code != 200 or '#EXT' not in r.text:
         raise ValueError(f'변형 m3u8 응답 이상: {r.status_code if r else "?"}')
-    base = variant_url.rsplit('/', 1)[0] + '/'
-    seg_urls = [
-        (s if s.startswith('http') else base + s)
-        for s in (ln.strip() for ln in r.text.splitlines())
-        if s and not s.startswith('#')
-    ]
+    seg_urls = playlist_entries(r.text, r.url or variant_url)
     total = len(seg_urls)
     if total == 0:
         raise ValueError('세그먼트가 없습니다')
